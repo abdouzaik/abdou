@@ -1,0 +1,643 @@
+
+[2/26/2026, 23:00:19]
+__________________
+SENDER : USER
+CMD    : فيديو
+JID    : 967779658693@s.whatsapp.net
+LID    : 226293907984489@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/26/2026, 23:02:21]
+__________________
+SENDER : USER
+CMD    : حدث
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/26/2026, 23:02:23]
+__________________
+SENDER : USER
+CMD    : .؟
+JID    : 218919051673@s.whatsapp.net
+LID    : 243413563736097@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/26/2026, 23:02:23]
+__________________
+UNKNOWN: .؟
+SENDER: 218919051673@s.whatsapp.net
+__________________
+
+[2/26/2026, 23:07:25]
+__________________
+SENDER : USER
+CMD    : طير
+JID    : 967779658693@s.whatsapp.net
+LID    : 226293907984489@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/26/2026, 23:07:25]
+__________________
+SENDER : USER
+CMD    : طير
+JID    : 972504379312@s.whatsapp.net
+LID    : 32698273923074@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/26/2026, 23:07:26]
+__________________
+SENDER : USER
+CMD    : اوامر
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/26/2026, 23:09:30]
+__________________
+SENDER : USER
+CMD    : اعدت
+JID    : 967779658693@s.whatsapp.net
+LID    : 226293907984489@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/26/2026, 23:09:30]
+__________________
+UNKNOWN: اعدت
+SENDER: 967779658693@s.whatsapp.net
+__________________
+
+[2/26/2026, 23:09:31]
+__________________
+SENDER : USER
+CMD    : اوامر
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/26/2026, 23:09:34]
+__________________
+SENDER : BOT
+CMD    : تست
+JID    : 213773231685@s.whatsapp.net
+LID    : 227552333414482@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/26/2026, 23:10:35]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 967779658693@s.whatsapp.net
+LID    : 226293907984489@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/26/2026, 23:10:35]
+__________________
+SENDER : BOT
+CMD    : اوامر
+JID    : 213773231685@s.whatsapp.net
+LID    : 227552333414482@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/26/2026, 23:10:35]
+__________________
+SENDER : USER
+CMD    : اوامر
+JID    : 967779658693@s.whatsapp.net
+LID    : 226293907984489@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/26/2026, 23:10:35]
+__________________
+SENDER : BOT
+CMD    : تست
+JID    : 213773231685@s.whatsapp.net
+LID    : 227552333414482@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/26/2026, 23:10:37]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 967779653435@s.whatsapp.net
+LID    : 228681909805092@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/26/2026, 23:11:20]
+__________________
+SENDER : USER
+CMD    : طيط
+JID    : 967779658693@s.whatsapp.net
+LID    : 226293907984489@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/26/2026, 23:11:20]
+__________________
+UNKNOWN: طيط
+SENDER: 967779658693@s.whatsapp.net
+__________________
+
+[2/26/2026, 23:11:40]
+__________________
+SENDER : USER
+CMD    : اوامر
+JID    : 967779658693@s.whatsapp.net
+LID    : 226293907984489@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/26/2026, 23:11:40]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 967779658693@s.whatsapp.net
+LID    : 226293907984489@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/26/2026, 23:11:42]
+__________________
+SENDER : USER
+CMD    : رقم
+JID    : 201095053398@s.whatsapp.net
+LID    : 166950210682910@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/26/2026, 23:11:42]
+__________________
+UNKNOWN: رقم
+SENDER: 201095053398@s.whatsapp.net
+__________________
+
+[2/26/2026, 23:11:45]
+__________________
+SENDER : USER
+CMD    : te
+JID    : 967779653435@s.whatsapp.net
+LID    : 228681909805092@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/26/2026, 23:11:45]
+__________________
+UNKNOWN: te
+SENDER: 967779653435@s.whatsapp.net
+__________________
+
+[2/26/2026, 23:11:45]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 967779658693@s.whatsapp.net
+LID    : 226293907984489@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/27/2026, 20:40:04]
+__________________
+SENDER : USER
+CMD    : طردَ
+JID    : 972504379312@s.whatsapp.net
+LID    : 32698273923074@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/27/2026, 20:40:04]
+__________________
+UNKNOWN: طردَ
+SENDER: 972504379312@s.whatsapp.net
+__________________
+
+[2/27/2026, 20:43:06]
+__________________
+SENDER : USER
+CMD    : فنشّ
+JID    : 201097702017@s.whatsapp.net
+LID    : 210990704644224@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/27/2026, 20:43:06]
+__________________
+UNKNOWN: فنشّ
+SENDER: 201097702017@s.whatsapp.net
+__________________
+
+[2/27/2026, 20:58:49]
+__________________
+SENDER : USER
+CMD    : طير
+JID    : 967779658693@s.whatsapp.net
+LID    : 226293907984489@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/27/2026, 21:06:35]
+__________________
+SENDER : USER
+CMD    : pfp
+JID    : 201097702017@s.whatsapp.net
+LID    : 210990704644224@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/27/2026, 21:06:35]
+__________________
+UNKNOWN: pfp
+SENDER: 201097702017@s.whatsapp.net
+__________________
+
+[2/27/2026, 21:10:03]
+__________________
+SENDER : USER
+CMD    : pfp
+JID    : 252771315337@s.whatsapp.net
+LID    : 229798483873892@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/27/2026, 21:10:03]
+__________________
+UNKNOWN: pfp
+SENDER: 252771315337@s.whatsapp.net
+__________________
+
+[2/27/2026, 21:10:04]
+__________________
+SENDER : USER
+CMD    : bes
+JID    : 967779653435@s.whatsapp.net
+LID    : 228681909805092@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/27/2026, 21:10:04]
+__________________
+UNKNOWN: bes
+SENDER: 967779653435@s.whatsapp.net
+__________________
+
+[2/27/2026, 21:11:06]
+__________________
+SENDER : USER
+CMD    : pfp
+JID    : 212614650225@s.whatsapp.net
+LID    : 41416923328613@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/27/2026, 21:11:06]
+__________________
+UNKNOWN: pfp
+SENDER: 212614650225@s.whatsapp.net
+__________________
+
+[2/27/2026, 21:12:07]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 967779653435@s.whatsapp.net
+LID    : 228681909805092@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/27/2026, 21:12:23]
+__________________
+SENDER : USER
+CMD    : طير
+JID    : 201097702017@s.whatsapp.net
+LID    : 210990704644224@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/27/2026, 21:16:07]
+__________________
+SENDER : USER
+CMD    : شات
+JID    : 972504379312@s.whatsapp.net
+LID    : 32698273923074@lid
+LOC    : GROUP
+ELITE  : NO
+__________________
+
+[2/27/2026, 21:17:53]
+__________________
+ℹ [SYSTEM]: Connection Closed (428).
+__________________
+
+[2/27/2026, 21:25:05]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/27/2026, 21:32:11]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/27/2026, 21:32:18]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/27/2026, 21:32:22]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/27/2026, 21:32:23]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/27/2026, 21:32:24]
+__________________
+SENDER : USER
+CMD    : ست
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/27/2026, 21:32:24]
+__________________
+UNKNOWN: ست
+SENDER: 213540419314@s.whatsapp.net
+__________________
+
+[2/27/2026, 21:32:26]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/27/2026, 21:32:28]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/27/2026, 21:32:29]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/27/2026, 21:32:34]
+__________________
+SENDER : USER
+CMD    : منشن
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/27/2026, 21:36:05]
+__________________
+SENDER : USER
+CMD    : منشن
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/27/2026, 22:32:59]
+__________________
+UNKNOWN: ..
+SENDER: 212785890313@s.whatsapp.net
+__________________
+
+[2/27/2026, 22:32:59]
+__________________
+SENDER : USER
+CMD    : ..
+JID    : 212785890313@s.whatsapp.net
+LID    : 19486988054547@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 01:43:41]
+__________________
+SENDER : USER
+CMD    : تيك
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 01:45:00]
+__________________
+SENDER : USER
+CMD    : تيك
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 01:55:21]
+__________________
+SENDER : USER
+CMD    : تيك
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 02:06:18]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 02:07:08]
+__________________
+SENDER : USER
+CMD    : اوامر
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 02:09:26]
+__________________
+SENDER : USER
+CMD    : فضح
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 02:11:04]
+__________________
+SENDER : USER
+CMD    : تست
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 02:11:08]
+__________________
+SENDER : USER
+CMD    : اوامر
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 02:11:18]
+__________________
+SENDER : USER
+CMD    : فضح
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 02:11:42]
+__________________
+SENDER : BOT
+CMD    : فضح
+JID    : 972599351390@s.whatsapp.net
+LID    : 272241518493701@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 02:12:14]
+__________________
+SENDER : BOT
+CMD    : اعدادات
+JID    : 972599351390@s.whatsapp.net
+LID    : 272241518493701@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 02:21:46]
+__________________
+ℹ [SYSTEM]: Connection Closed (428).
+__________________
+
+[2/28/2026, 02:23:23]
+__________________
+SENDER : USER
+CMD    : ارثر
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 05:03:54]
+__________________
+SENDER : USER
+CMD    : تيك
+JID    : 213540419314@s.whatsapp.net
+LID    : 104806312050733@lid
+LOC    : GROUP
+ELITE  : YES
+__________________
+
+[2/28/2026, 21:14:41]
+__________________
+ℹ [SYSTEM]: Connection Closed (428).
+__________________
