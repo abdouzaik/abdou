@@ -9,7 +9,7 @@ const config = {
     defaultPrefix: '.',
 
     pairing:{
-        phone: "972599351390",
+        phone: "213541231299",
         code : "ART1ART1",
     },
 
@@ -23,7 +23,7 @@ const config = {
 
     novaInfo: {
     ceiling: "𝙰𝚁𝚃 ©",
-    name: "*𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝*",
+    name: "𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝",
     description: "𝚄𝙻𝚃𝚁𝙰 𝙽𝙾𝚅𝙰",
     verification: true,
     media: true
