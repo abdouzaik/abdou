@@ -17,21 +17,25 @@ export default {
         // ── صلاحيات ───────────────────────────────────────────
         let isAdmin = false, isBotAdmin = false;
         try {
-            const meta      = await sock.groupMetadata(chatId);
-            const botNum    = sock.user.id.split(':')[0].replace(/\D/g,'');
-            const admins    = meta.participants
+            const meta   = await sock.groupMetadata(chatId);
+            const botRaw = sock.user.id;                          // مثال: 966501234567:12@s.whatsapp.net
+            const botNum = botRaw.split(':')[0].split('@')[0];   // 966501234567
+
+            // كل المشرفين كأرقام نظيفة
+            const adminNums = meta.participants
                 .filter(p => p.admin)
-                .map(p => p.id.split('@')[0].split(':')[0].replace(/\D/g,''));
+                .map(p => p.id.split(':')[0].split('@')[0]);
 
-            // استخرج رقم المرسل بكل الطرق الممكنة
-            const rawSender = sender?.pn
-                || msg.key.participant
-                || msg.key.remoteJid
-                || '';
-            const senderNum = rawSender.split('@')[0].split(':')[0].replace(/\D/g,'');
+            // رقم المرسل — جرب كل المصادر
+            const candidates = [
+                sender?.pn,
+                sender?.lid,
+                msg.key.participant,
+                msg.key.remoteJid
+            ].filter(Boolean).map(v => v.split(':')[0].split('@')[0]);
 
-            isAdmin    = admins.includes(senderNum) || msg.key.fromMe;
-            isBotAdmin = admins.includes(botNum);
+            isAdmin    = msg.key.fromMe || candidates.some(c => adminNums.includes(c));
+            isBotAdmin = adminNums.includes(botNum);
         } catch {}
 
         if (!isAdmin)    return reply(sock, chatId, '❌ هذا الأمر للمشرفين فقط', msg);
