@@ -23,7 +23,7 @@ async function execute({ sock, msg }) {
 
         // رسالة انتظار
         await sock.sendMessage(jid, {
-            text: `...`
+            text: `⏳ جاري التحقق من *${ids.length}* رقم دفعة وحدة...`
         }, { quoted: msg });
 
         // التحقق من الكل مرة وحدة بـ Promise.allSettled
