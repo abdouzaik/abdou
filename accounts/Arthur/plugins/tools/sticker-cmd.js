@@ -18,7 +18,7 @@ fs.ensureDirSync(TMP);
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // EXIF
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-async function addExif(buffer, packname = 'ULTRA NOVA', author = 'ART') {
+async function addExif(buffer, packname = '𝙰𝚛𝚝𝚑𝚞𝚛', author = '𝑩𝒚 𝑨𝒃𝒅𝒐𝒖') {
     const img  = new webp.Image();
     const id   = crypto.randomBytes(32).toString('hex');
     const json = {
