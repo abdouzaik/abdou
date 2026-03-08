@@ -72,9 +72,9 @@ function toAnimatedWebp(inputPath, outputPath, quality, fps, size) {
                 '-vf', crop,
                 '-loop', '0',
                 '-preset', 'default',
-                '-compression_level', '6',
+                '-compression_level', '10',
                 '-quality', String(quality),
-                '-an', '-vsync', '0', '-t', '6',
+                '-an', '-vsync', '0', '-t', '10',
             ])
             .toFormat('webp').save(outputPath)
             .on('end', resolve)
@@ -86,9 +86,9 @@ function toAnimatedWebp(inputPath, outputPath, quality, fps, size) {
                         '-vf', crop,
                         '-loop', '0',
                         '-preset', 'default',
-                        '-compression_level', '6',
+                        '-compression_level', '10',
                         '-quality', String(quality),
-                        '-an', '-vsync', '0', '-t', '6',
+                        '-an', '-vsync', '0', '-t', '10',
                     ])
                     .toFormat('webp').save(outputPath)
                     .on('end', resolve).on('error', reject);
@@ -156,7 +156,7 @@ export default {
     NovaUltra: {
         command: 'ستيكر',
         description: 'يحول صورة أو فيديو لستيكر مربع مضغوط',
-        elite: 'on',
+        elite: 'off',
     },
     execute: async ({ sock, msg }) => {
         const chatId   = msg.key.remoteJid;
