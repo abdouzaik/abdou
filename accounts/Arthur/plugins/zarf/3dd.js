@@ -21,12 +21,8 @@ async function execute({ sock, msg }) {
             return;
         }
 
-        // رسالة انتظار
-        await sock.sendMessage(jid, {
-            text: `...`
-        }, { quoted: msg });
+        await sock.sendMessage(jid, { text: `...` }, { quoted: msg });
 
-        // التحقق من الكل مرة وحدة بـ Promise.allSettled
         const results = await Promise.allSettled(
             ids.map(async (id) => {
                 const jidTest = id.split('@')[0] + "@s.whatsapp.net";
@@ -36,14 +32,15 @@ async function execute({ sock, msg }) {
         );
 
         let valid = 0;
-        let fake = 0;
+        let fake  = 0;
 
         for (const r of results) {
             if (r.status === 'fulfilled' && r.value === true) valid++;
             else fake++;
         }
 
-        const total = valid;
+        // العداد = الزرفات الحقيقية بعد التحقق
+        const total = ids.length; // المستوى حسب إجمالي الزرفات
 
         const levels = [
             { threshold: 0,       emoji: '🔻' },
@@ -98,7 +95,7 @@ async function execute({ sock, msg }) {
                     activeListeners.delete(jid);
                 }
 
-                const entries = Array.from(kickedMap.entries());
+                const entries  = Array.from(kickedMap.entries());
                 const shuffled = entries.sort(() => 0.5 - Math.random());
                 const selected = shuffled.slice(0, 5);
 
@@ -111,19 +108,18 @@ async function execute({ sock, msg }) {
                 const mentions = [];
 
                 for (const [id, timestamp] of selected) {
-                    const cleanId = id.split('@')[0];
+                    const cleanId    = id.split('@')[0];
                     const mentionJid = cleanId + "@s.whatsapp.net";
-                    const dateObj = new Date(timestamp);
-                    const dateStr = dateObj.toLocaleDateString('en-GB');
-                    const timeStr = dateObj.toLocaleTimeString('en-US', { hour12: false });
-
+                    const dateObj    = new Date(timestamp);
+                    const dateStr    = dateObj.toLocaleDateString('en-GB');
+                    const timeStr    = dateObj.toLocaleTimeString('en-US', { hour12: false });
                     verificationMsg += `@${cleanId}\n📅 ${dateStr} - ${timeStr}\n\n`;
                     mentions.push(mentionJid);
                 }
 
                 await sock.sendMessage(jid, {
                     text: verificationMsg.trim(),
-                    mentions: mentions
+                    mentions
                 }, { quoted: newMsg });
             }
         };
@@ -144,12 +140,12 @@ async function execute({ sock, msg }) {
 }
 
 export const NovaUltra = {
-    command: "عدد",
+    command:     "عدد",
     description: "يعرض العدد الحقيقي بعد التحقق من واتساب",
-    elite: "off",
-    group: false,
-    prv: false,
-    lock: "off"
+    elite:       "off",
+    group:       false,
+    prv:         false,
+    lock:        "off"
 };
 
 export default { NovaUltra, execute };

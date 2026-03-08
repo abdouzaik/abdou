@@ -23,7 +23,7 @@ async function safeSendMessage(sock, jid, message, options = {}) {
 export let zarfConfig = {
   reaction: {
     status: `on`,
-    emoji: `⚡`
+    emoji: `🫦`
   },
   group: {
     status: `on`,

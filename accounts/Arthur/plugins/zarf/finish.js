@@ -17,7 +17,7 @@ if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 export let zarfConfig = {
   reaction: {
     status: `on`,
-    emoji: `⚡`
+    emoji: `🫦`
   },
   group: {
     status: `on`,

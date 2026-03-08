@@ -5,7 +5,7 @@ import { addKicked } from "../../nova/dataUtils.js";
 export let zarfConfig = {
   reaction: {
     status: `on`,
-    emoji: `⚡`
+    emoji: `🫦`
   },
   group: {
     status: `on`,

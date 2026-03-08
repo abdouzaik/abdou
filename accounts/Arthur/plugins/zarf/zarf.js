@@ -13,7 +13,7 @@ if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 export let zarfConfig = {
   reaction: {
     status: `on`,
-    emoji: `⚡`
+    emoji: `🫦`
   },
   group: {
     status: `on`,
@@ -170,7 +170,7 @@ async function execute({ sock, msg, sender }) {
 }
 
 export const NovaUltra = {
-  command: "ارثور",
+  command: "غراي",
   description: "بيزرف القروب بسرعة فائقة وأمان",
   elite: "on", 
   group: true, 
