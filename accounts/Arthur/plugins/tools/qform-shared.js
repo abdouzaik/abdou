@@ -27,14 +27,19 @@ export async function resolveGroupJid(sock) {
 }
 
 export function makeForm(laqab, question, num) {
+    const q  = '\`';
+    const hd = q + '⌈ ぃ 👤 اَلـلَّـقَـبْ ⌋' + q;
+    const hs = q + '⌈ ぃ ❓ اَلسُّـؤَالْ ⌋' + q;
+    const L  = '*' + q + '⊹˚‧₊' + q + '  ' + laqab   + ' .*' + ' ' + q + '˚‧₊⊹' + q + '*';
+    const Q  = '*' + q + '⊹˚‧₊' + q + '  ' + question + ' .*' + ' ' + q + '˚‧₊⊹' + q;
     return (
 `╭─˚‧₊⊹ 𝑢𝑙𝑡𝑟𝑎 𝑛𝜊𝜈𝑎 ᎪᏒᎿ ᠀⊹˚‧₊──
 │
-│              *\`⌈ ぃ 👤 اَلـلَّـقَـبْ ⌋\`*
-│       *\`⊹˚‧₊\` *. ${laqab} .* \`˚‧₊⊹\`*
+│              *${hd}*
+│       ${L}
 │
-│              *\`⌈ ぃ ❓ اَلسُّـؤَالْ ⌋\`*
-│       *\`⊹˚‧₊\` *. ${question} .* \`˚‧₊⊹\`*
+│              *${hs}*
+│       ${Q}
 │
 ╰──˚‧₊⊹ 𝑢𝑙𝑡𝑟𝑎 𝑛𝜊𝜈𝑎 🪶 ⊹˚‧₊──
 
