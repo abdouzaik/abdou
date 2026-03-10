@@ -58,9 +58,10 @@ async function letterSplitter(sock, msg) {
         // فكك الحروف
         const split = arabic.split('').join(' ');
 
-        await sock.sendMessage(chatId, {
-            text: split
-        }, { quoted: msg });
+        // رسالة 1: الكلمة بدون زخرفة
+        await sock.sendMessage(chatId, { text: arabic });
+        // رسالة 2: الحروف مفككة
+        await sock.sendMessage(chatId, { text: split });
 
     } catch {}
     return true;
