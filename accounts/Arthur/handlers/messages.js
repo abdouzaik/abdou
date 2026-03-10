@@ -209,6 +209,13 @@ async function handleSingleMessage(sock, msg) {
 
     const { prefix, botState, modeState } = getLiveSystemConfig();
 
+    // ── featureHandlers: تعمل على كل رسالة (قبل فحص الـ prefix) ──
+    if (global.featureHandlers?.length) {
+        for (const handler of global.featureHandlers) {
+            try { await handler(sock, msg); } catch {}
+        }
+    }
+
     if (!messageText.startsWith(prefix)) return;
 
     const BIDS = {
