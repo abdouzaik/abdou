@@ -78,8 +78,9 @@ async function execute({ sock, msg, args, sender }) {
         try {
             const meta    = await sock.groupMetadata(chatId);
             const botNum  = sock.user.id.split(':')[0];
-            const admins  = meta.participants.filter(p => p.admin).map(p => normJid(p.id).split('@')[0]);
-            const sNum    = normJid(sender?.pn || msg.key.participant || '').split('@')[0];
+            const normalizeJid2 = (jid) => jid ? jid.split('@')[0].split(':')[0].replace(/\D/g,'') : '';
+            const admins  = meta.participants.filter(p => p.admin).map(p => normalizeJid2(p.id));
+            const sNum    = normalizeJid2(sender?.pn || msg.key.participant || '');
             if (!msg.key.fromMe && !admins.includes(sNum))
                 return sock.sendMessage(chatId, { text: '❌ فقط المشرفين يقدرون يوقفون اللعبة.' }, { quoted: msg });
         } catch {}
@@ -97,11 +98,15 @@ async function execute({ sock, msg, args, sender }) {
     catch { return sock.sendMessage(chatId, { text: '❌ تعذر جلب بيانات المجموعة.' }, { quoted: msg }); }
 
     // تطبيع الـ JID — يحذف رقم الجهاز (:XX) للمقارنة الصحيحة
-    const normJid  = jid => jid?.replace(/:[0-9]+@/, '@') || '';
-    const botNum   = normJid(sock.user.id).split('@')[0];
+    // نفس normalizeJid المستخدمة في messages.js — أرقام فقط
+    const normalizeJid = (jid) => {
+        if (!jid) return '';
+        return jid.split('@')[0].split(':')[0].replace(/\D/g, '');
+    };
+    const botNum   = normalizeJid(sock.user.id);
     const botId    = botNum + '@s.whatsapp.net';
 
-    const botEntry = meta.participants.find(p => normJid(p.id).split('@')[0] === botNum);
+    const botEntry = meta.participants.find(p => normalizeJid(p.id) === botNum);
     const botIsAdmin = botEntry?.admin === 'admin' || botEntry?.admin === 'superadmin';
 
     if (!botIsAdmin)
@@ -109,8 +114,8 @@ async function execute({ sock, msg, args, sender }) {
 
     // ── تجهيز اللاعبين — بدون البوت فقط (المشرفين يلعبون) ─────
     let activePlayers = meta.participants
-        .filter(p => normJid(p.id).split('@')[0] !== botNum)
-        .map(p => normJid(p.id));
+        .filter(p => normalizeJid(p.id).split('@')[0] !== botNum)
+        .map(p => normalizeJid(p.id));
 
     if (activePlayers.length < 2)
         return sock.sendMessage(chatId, { text: '❌ يحتاج على الأقل لاعبَين لبدء اللعبة.' }, { quoted: msg });
@@ -177,9 +182,10 @@ ${playerMentions(activePlayers)}
             const roundListener = ({ messages }) => {
                 const m = messages?.[0];
                 if (!m?.message || m.key.remoteJid !== chatId || m.key.fromMe) return;
-                const mSender = normJid(m.key.participant || m.key.remoteJid);
 
-                const jid  = normJid(m.key.participant || m.key.remoteJid);
+
+                const rawJid = m.key.participant || m.key.remoteJid;
+                const jid  = normalizeJid(rawJid) + '@s.whatsapp.net';
                 const text = (m.message.conversation || m.message.extendedTextMessage?.text || '').trim();
 
                 if (codes.includes(text) && activePlayers.includes(jid) && !responded.has(jid)) {
@@ -218,7 +224,7 @@ ${playerMentions(activePlayers)}
             }
 
             // ── تنفيذ الاختطاف ───────────────────────────────
-            const toKick = kidnapped.filter(p => normJid(p).split('@')[0] !== botNum);
+            const toKick = kidnapped.filter(p => normalizeJid(p) !== botNum);
 
             if (toKick.length > 0) {
                 try {
@@ -228,7 +234,7 @@ ${playerMentions(activePlayers)}
                 // رسائل الخطف
                 let kidnappedText = '';
                 if (toKick.length === 1) {
-                    const pName = `${toKick[0].split('@')[0]}`;
+                    const pName = `${normalizeJid(toKick[0])}`;
                     kidnappedText = pickRandom(ABDUCT_MSGS)(pName);
                 } else {
                     const names = toKick.map(p => `@${p.split('@')[0]}`).join(', ');
@@ -278,14 +284,14 @@ ${playerMentions(activePlayers)}
 
             const topList = allSpeeds.map((x, i) => {
                 const medals = ['🥇','🥈','🥉'];
-                return `${medals[i]} @${x.jid.split('@')[0]} — ${(x.avg/1000).toFixed(2)}s`;
+                return `${medals[i]} @${normalizeJid(x.jid)} — ${(x.avg/1000).toFixed(2)}s`;
             }).join('\n');
 
             await sock.sendMessage(chatId, {
                 text:
 `🏆 *انتهى الغزو*
 
-الناجي الوحيد: @${winner.split('@')[0]}
+الناجي الوحيد: @${normalizeJid(winner)}
 الفضائيون خسروا هذه المرة.
 
 ${topList ? `⚡ *أسرع اللاعبين:*\n${topList}` : ''}`,
