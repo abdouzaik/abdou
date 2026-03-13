@@ -245,7 +245,12 @@ async function handleSingleMessage(sock, msg) {
     const isOwner = sender.pn === (ownerNumber + "@s.whatsapp.net");
 
     let senderIsElite = false;
-    try { senderIsElite = await sock.isElite({ sock, id: sender.pn }); } catch (e) {}
+try { 
+    senderIsElite = await sock.isElite({ sock, id: sender.pn }); 
+} catch (e) {
+    console.error("❌ فشل التحقق من رتبة النخبة:", e.message);
+}
+
 
     const senderRole = msg.key.fromMe ? "BOT" : (isOwner ? "OWNER" : "USER");
     const eliteStatus = senderIsElite ? "YES" : "NO";
@@ -348,13 +353,16 @@ ELITE  : ${eliteStatus}`;
             const originalIsElite = sock.isElite;
             
 
-            sock.isElite = async (opts) => {
-                const idToCheck = opts?.id || opts;
-                if (normalizeJid(idToCheck) === normalizeJid(ownerNumber)) {
-                    return true; 
-                }
-                return originalIsElite ? await originalIsElite(opts) : false;
-            };
+sock.isElite = async (opts) => {
+    const idToCheck = typeof opts === 'string' ? opts : opts?.id;
+    if (normalizeJid(idToCheck) === normalizeJid(ownerNumber)) {
+        return true; 
+    }
+    // تمرير البيانات بالشكل الصحيح للدالة الأصلية لتجنب تحطمها
+    const finalOpts = typeof opts === 'string' ? { sock, id: opts } : opts;
+    return originalIsElite ? await originalIsElite(finalOpts) : false;
+};
+
 
             await handler.execute({ sock, msg, args, BIDS, sender });
             
