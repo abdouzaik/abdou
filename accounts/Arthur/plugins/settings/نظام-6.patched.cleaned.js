@@ -2399,7 +2399,7 @@ export default { NovaUltra, execute };
 // The functions below are defensive (they use child_process.exec) and return/throw Errors similar to yt-dlp messages.
 
 const child_process = require('child_process');
-const fs = require('fs-extra');
+const fse = require('fs-extra');
 const path = require('path');
 const os = require('os');
 
@@ -2444,10 +2444,10 @@ async function getYtdlpBinPatched() {
 async function ytdlpDownloadPatched(url, opts = {}) {
   opts = opts || {};
   const tmpDir = path.join(os.tmpdir(), `dl_${Date.now()}_${Math.random().toString(36).slice(2)}`);
-  fs.ensureDirSync(tmpDir);
+  fse.ensureDirSync(tmpDir);
 
   const cleanup = () => {
-    try { fs.removeSync(tmpDir); } catch (e) {}
+    try { fse.removeSync(tmpDir); } catch (e) {}
   };
 
   const bin = await getYtdlpBinPatched();
@@ -2518,12 +2518,12 @@ async function ytdlpDownloadPatched(url, opts = {}) {
     }
 
     // pick downloaded file
-    const files = (fs.readdirSync(tmpDir) || []).filter(f => !f.endsWith('.part') && !f.endsWith('.ytdl'));
+    const files = (fse.readdirSync(tmpDir) || []).filter(f => !f.endsWith('.part') && !f.endsWith('.ytdl'));
     if (!files.length) {
       cleanup();
       throw new Error('لم يُحمَّل أي ملف. إذا كان المحتوى خاصاً، جرّب توفير ملف الكوكيز.');
     }
-    const chosen = files.map(f => ({ f, size: fs.statSync(path.join(tmpDir, f)).size }))
+    const chosen = files.map(f => ({ f, size: fse.statSync(path.join(tmpDir, f)).size }))
                         .sort((a,b) => b.size - a.size)[0].f;
     const filePath = path.join(tmpDir, chosen);
     return { filePath, ext: path.extname(chosen).slice(1).toLowerCase(), cleanup };
