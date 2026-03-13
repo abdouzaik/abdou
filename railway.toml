@@ -2,7 +2,7 @@
 builder = "nixpacks"
 
 [build.nixpacksPlan.phases.setup]
-nixPkgs = ["nodejs_20", "ffmpeg"]
+nixPkgs = ["nodejs_20", "ffmpeg", "yt-dlp"]
 
 [build.nixpacksPlan.phases.install]
 cmds = ["npm install --legacy-peer-deps"]

@@ -12,6 +12,7 @@ import { promisify } from 'util';
 import { loadPlugins, getPlugins } from '../../handlers/plugins.js';
 import {
     downloadMediaMessage,
+    downloadContentFromMessage,
     jidDecode,
     generateMessageID,
 } from '@whiskeysockets/baileys';
@@ -35,6 +36,53 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const react = (sock, msg, e) =>
     sock.sendMessage(msg.key.remoteJid, { react: { text: e, key: msg.key } }).catch(() => {});
 
+// رياكت بحسب محتوى الرسالة
+const INPUT_REACT_MAP = {
+    'رجوع':         '🔙',
+    'نعم':          '✅',
+    'لا':           '❌',
+    'نخبة':         '👑',
+    'بلاجنز':       '🧩',
+    'تنزيلات':      '⬇️',
+    'إحصاءات':      '📊',
+    'احصاءات':      '📊',
+    'حماية':        '🛡️',
+    'اوامر':        '🔧',
+    'إدارة':        '🛠️',
+    'اضافة':        '➕',
+    'حذف':          '🗑️',
+    'عرض':          '👀',
+    'مسح الكل':     '🧹',
+    'مسح':          '🗑️',
+    'تثبيت':        '📌',
+    'الغاء تثبيت':  '📌',
+    'قفل':          '🔒',
+    'فتح':          '🔓',
+    'رفع مشرف':     '👑',
+    'تنزيل مشرف':   '⬇️',
+    'طرد':          '🚪',
+    'حظر':          '🔨',
+    'كتم':          '🔇',
+    'الغاء كتم':    '🔊',
+    'الغاء حظر':    '✅',
+    'رابط':         '🔗',
+    'تحديث':        '🔄',
+    'فيديو':        '🎬',
+    'صوت':          '🎵',
+    'معلومات':      'ℹ️',
+    'اذاعة':        '📢',
+    'انضم':         '✅',
+    'خروج':         '🚪',
+    'ضبط':          '⚙️',
+    'تغيير الاسم':  '✏️',
+    'كود':          '💻',
+};
+
+const reactInput = (sock, m, text) => {
+    const key = Object.keys(INPUT_REACT_MAP).find(k => text.trim() === k);
+    if (key) return sock.sendMessage(m.key.remoteJid, { react: { text: INPUT_REACT_MAP[key], key: m.key } }).catch(() => {});
+};
+
 // normalizeJid — مطابق لـ messages.js
 const normalizeJid = jid =>
     jid ? jid.split('@')[0].split(':')[0] : '';
@@ -44,7 +92,7 @@ const getBotJid = sock =>
      sock.user?.id?.split(':')[0]?.split('@')[0] || '') + '@s.whatsapp.net';
 
 // ══════════════════════════════════════════════════════════════
-//  resolveTarget — يحل LID → phone JID للعمليات على الأعضاء
+//  resolveTarget — يحل LID → phone JID للعمليات على الاعضاء
 // ══════════════════════════════════════════════════════════════
 async function resolveTarget(sock, chatId, m) {
     const ctx = m.message?.extendedTextMessage?.contextInfo;
@@ -74,6 +122,8 @@ const writeJSON = (f, d)        => { try { fs.writeFileSync(f, JSON.stringify(d,
 const readProt  = () => readJSON(PROT_FILE, {
     antiCrash:'off', antiLink:'off', antiDelete:'off',
     antiInsult:'off', antiViewOnce:'off', antiPrivate:'off',
+    linkWarns: {},   // { chatId: { senderJid: count } }
+    insultWarns: {}, // { chatId: { senderJid: count } }
 });
 const writeProt = d => writeJSON(PROT_FILE, d);
 const readStats = () => readJSON(STATS_FILE, { commands:{}, users:{}, total:0 });
@@ -268,13 +318,19 @@ async function protectionHandler(sock, msg) {
                         msg.message?.extendedTextMessage?.text ||
                         msg.message?.imageMessage?.caption || '';
 
-        // antiPrivate
+        // ── antiPrivate — يرسل رسالة ثم يبلّك ──
         if (prot.antiPrivate === 'on' && !isGroup && !msg.key.fromMe) {
-            try { await sock.updateBlockStatus(chatId, 'block'); } catch {}
+            try {
+                await sock.sendMessage(chatId, {
+                    text: `❍━═━═━═━❍\n❍⇇ ممنوع الكلام في الخاص\n❍⇇ تم حظرك تلقائياً\n❍━═━═━═━❍`
+                });
+                await sleep(500);
+                await sock.updateBlockStatus(chatId, 'block');
+            } catch (e) { console.error('[antiPrivate]', e.message); }
             return;
         }
 
-        // antiCrash
+        // ── antiCrash ──
         if (prot.antiCrash === 'on') {
             for (const p of CRASH_PATTERNS) {
                 if (p.test(text)) {
@@ -284,7 +340,7 @@ async function protectionHandler(sock, msg) {
             }
         }
 
-        // antiLink
+        // ── antiLink — حذف + تحذير بنظام 3 تحذيرات ثم طرد ──
         if (prot.antiLink === 'on' && isGroup && hasLink(text)) {
             if (!msg.key.fromMe) {
                 const senderRaw = msg.key.participant || '';
@@ -292,49 +348,92 @@ async function protectionHandler(sock, msg) {
                 const isBotAdm  = await isBotGroupAdmin(sock, chatId);
                 if (!isAdmin && isBotAdm) {
                     try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
+                    if (!prot.linkWarns) prot.linkWarns = {};
+                    if (!prot.linkWarns[chatId]) prot.linkWarns[chatId] = {};
+                    prot.linkWarns[chatId][senderRaw] = (prot.linkWarns[chatId][senderRaw] || 0) + 1;
+                    const w = prot.linkWarns[chatId][senderRaw];
+                    if (w >= 3) {
+                        prot.linkWarns[chatId][senderRaw] = 0;
+                        writeProt(prot);
+                        await sock.sendMessage(chatId, {
+                            text: `⛔ @${normalizeJid(senderRaw)} تم طرده بسبب نشر الروابط (3/3)`,
+                            mentions: [senderRaw],
+                        });
+                        try { await sock.groupParticipantsUpdate(chatId, [senderRaw], 'remove'); } catch {}
+                    } else {
+                        writeProt(prot);
+                        await sock.sendMessage(chatId, {
+                            text: `⚠️ @${normalizeJid(senderRaw)} تحذير ${w}/3 — ممنوع نشر الروابط`,
+                            mentions: [senderRaw],
+                        });
+                    }
                 }
             }
         }
 
-        // antiInsult
+        // ── antiInsult — حذف + تحذير بنظام 3 تحذيرات ثم طرد ──
         if (prot.antiInsult === 'on') {
             if (INSULT_WORDS.some(w => text.toLowerCase().includes(w))) {
                 try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
+                if (isGroup && !msg.key.fromMe) {
+                    const senderRaw = msg.key.participant || '';
+                    const isAdmin   = await isGroupAdmin(sock, chatId, senderRaw);
+                    if (!isAdmin) {
+                        if (!prot.insultWarns) prot.insultWarns = {};
+                        if (!prot.insultWarns[chatId]) prot.insultWarns[chatId] = {};
+                        prot.insultWarns[chatId][senderRaw] = (prot.insultWarns[chatId][senderRaw] || 0) + 1;
+                        const w = prot.insultWarns[chatId][senderRaw];
+                        if (w >= 3) {
+                            prot.insultWarns[chatId][senderRaw] = 0;
+                            writeProt(prot);
+                            await sock.sendMessage(chatId, {
+                                text: `⛔ @${normalizeJid(senderRaw)} تم طرده بسبب الشتائم (3/3)`,
+                                mentions: [senderRaw],
+                            });
+                            try { await sock.groupParticipantsUpdate(chatId, [senderRaw], 'remove'); } catch {}
+                        } else {
+                            writeProt(prot);
+                            await sock.sendMessage(chatId, {
+                                text: `⚠️ @${normalizeJid(senderRaw)} تحذير ${w}/3 — ممنوع الشتم`,
+                                mentions: [senderRaw],
+                            });
+                        }
+                    }
+                }
                 return;
             }
         }
 
-        // antiViewOnce
+        // ── antiViewOnce — كشف تلقائي بـ downloadContentFromMessage ──
         if (prot.antiViewOnce === 'on') {
-            const ctx    = msg.message?.extendedTextMessage?.contextInfo;
-            const quoted = ctx?.quotedMessage;
-            if (quoted) {
-                const mtype = Object.keys(quoted).find(k => ['imageMessage','videoMessage'].includes(k));
-                if (mtype && quoted[mtype]?.viewOnce) {
-                    try {
-                        const buffer = await downloadMediaMessage({ message: quoted, key: ctx }, 'buffer', {});
-                        if (buffer) {
-                            const type    = mtype.replace('Message', '');
-                            const caption = (quoted[mtype]?.caption ? quoted[mtype].caption + '\n\n' : '') +
-                                            '👁️ _تم كشف وسائط المشاهدة لمرة واحدة_';
-                            await sock.sendMessage(chatId, { [type]: buffer, caption });
-                        }
-                    } catch {}
-                }
-            }
-            const wrapper = msg.message?.viewOnceMessage?.message || msg.message?.viewOnceMessageV2?.message;
-            if (wrapper) {
-                const mtype = Object.keys(wrapper).find(k => ['imageMessage','videoMessage'].includes(k));
+            // baileys يخزن viewOnce بعدة طرق
+            const vMsg =
+                msg.message?.viewOnceMessage?.message ||
+                msg.message?.viewOnceMessageV2?.message ||
+                msg.message?.viewOnceMessageV2Extension?.message ||
+                msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message;
+
+            if (vMsg) {
+                const mtype = Object.keys(vMsg).find(k =>
+                    ['imageMessage', 'videoMessage'].includes(k)
+                );
                 if (mtype) {
                     try {
-                        const buffer = await downloadMediaMessage({ message: wrapper, key: msg.key }, 'buffer', {});
-                        if (buffer) {
-                            const type    = mtype.replace('Message', '');
-                            const caption = (wrapper[mtype]?.caption ? wrapper[mtype].caption + '\n\n' : '') +
-                                            '👁️ _تم كشف وسائط المشاهدة لمرة واحدة_';
-                            await sock.sendMessage(chatId, { [type]: buffer, caption });
-                        }
-                    } catch {}
+                        const stream = await downloadContentFromMessage(
+                            vMsg[mtype],
+                            mtype.replace('Message', '')
+                        );
+                        let buf = Buffer.alloc(0);
+                        for await (const chunk of stream) buf = Buffer.concat([buf, chunk]);
+                        const sender = msg.key.participant || msg.key.remoteJid;
+                        await sock.sendMessage(chatId, {
+                            [mtype.replace('Message', '')]: buf,
+                            caption: (vMsg[mtype]?.caption ? vMsg[mtype].caption + '\n\n' : '') +
+                                     `👁️ *كُشفت بواسطة مضاد المشاهدة*\n` +
+                                     `👤 @${normalizeJid(sender)}`,
+                            mentions: [sender],
+                        });
+                    } catch (e) { console.error('[antiViewOnce]', e.message); }
                 }
             }
         }
@@ -780,6 +879,35 @@ const MAIN_MENU =
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`;
 
+// ══════════════════════════════════════════════════════════════
+//  main menu
+// ══════════════════════════════════════════════════════════════
+const MAIN_MENU =
+`✧━── ❝ 𝐍𝐎𝐕𝐀 𝐒𝐘𝐒𝐓𝐄𝐌 ❞ ──━✧
+
+✦ *نخبة*
+\`👑 ادارة قائمة النخبة\`
+
+✦ *بلاجنز*
+\`🧩 ادارة وعرض الاوامر\`
+
+✦ *تنزيلات*
+\`⬇️ تنزيل من يوتيوب وانستقرام وغيرها\`
+
+✦ *إحصاءات*
+\`📊 تقارير الاستخدام\`
+
+✦ *حماية*
+\`🛡️ انظمة الحماية\`
+
+✦ *اوامر*
+\`🔧 ادوات الاوامر\`
+
+✦ *إدارة*
+\`🛠️ إدارة المجموعات\`
+
+✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`;
+
 const activeSessions = new Map();
 
 // ══════════════════════════════════════════════════════════════
@@ -799,14 +927,11 @@ const NovaUltra = {
 // ══════════════════════════════════════════════════════════════
 async function execute({ sock, msg }) {
     const chatId = msg.key.remoteJid;
-
-    // ── المرسل: نفس طريقة settings.js (حقل خام ثابت) ──
     const sender = msg.key.participant || chatId;
 
     registerDeleteListener(sock);
     registerWelcomeListener(sock);
 
-    // ── إنهاء جلسة سابقة ──
     if (activeSessions.has(chatId)) {
         const old = activeSessions.get(chatId);
         sock.ev.off('messages.upsert', old.listener);
@@ -819,17 +944,14 @@ async function execute({ sock, msg }) {
     let state     = 'MAIN';
     let tmp       = {};
 
-    console.log(`[نظام] جلسة بدأت | chat:${chatId.split('@')[0]} | sender:${normalizeJid(sender)}`);
-
-    // ── update: تعديل الرسالة ──
     const update = async (text) => {
         try { await sock.sendMessage(chatId, { text, edit: botMsgKey }); }
         catch { const s = await sock.sendMessage(chatId, { text }); botMsgKey = s.key; }
     };
 
-    // ── فحص صلاحيات المجموعة ──
+    // ── فحص الصلاحيات — نفس اسلوب finish.js/kickall.js ──
     async function getAdminPerms() {
-        if (!chatId.endsWith('@g.us')) return { isGroup: false, isAdmin: false, isBotAdmin: false };
+        if (!chatId.endsWith('@g.us')) return { isGroup: false, isAdmin: false, isBotAdmin: false, meta: null };
         try {
             const meta      = await sock.groupMetadata(chatId);
             const senderNum = normalizeJid(sender);
@@ -864,24 +986,21 @@ async function execute({ sock, msg }) {
         sock.ev.off('messages.upsert', listener);
         clearTimeout(timeout);
         activeSessions.delete(chatId);
-        console.log(`[نظام] جلسة انتهت | chat:${chatId.split('@')[0]}`);
     };
 
     // ══════════════════════════════════════════════════════
-    //  listener — نمط settings.js الصحيح
+    //  listener
     // ══════════════════════════════════════════════════════
     const listener = async ({ messages }) => {
         const m = messages[0];
         if (!m?.message || m.key.remoteJid !== chatId) return;
-
-        // ── مقارنة المرسل بنفس الحقل الخام (لا تحويل، لا LID issue) ──
         const newSender = m.key.participant || m.key.remoteJid;
         if (newSender !== sender) return;
 
         const text = (m.message.conversation || m.message.extendedTextMessage?.text || '').trim();
         if (!text) return;
 
-        console.log(`[نظام] input | state:${state} | "${text}"`);
+        reactInput(sock, m, text);
 
         // ══════════════════════════════════════════════════
         // MAIN
@@ -904,40 +1023,67 @@ async function execute({ sock, msg }) {
             if (text === 'رجوع') { await update(MAIN_MENU); state = 'MAIN'; return; }
             if (text === 'عرض') {
                 try {
-                    const list = await sock.getEliteList?.() || [];
-                    if (!list.length) return update('✧━── ❝ 𝐍𝐗𝐁𝐀 ❞ ──━✧\n\n📋 القائمة فارغة.\n\n🔙 *رجوع*\n\n✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧');
-                    return update(`✧━── ❝ 𝐍𝐗𝐁𝐀 ❞ ──━✧\n\n👑 *قائمة النخبة:*\n\n${list.map((n,i)=>`${i+1}. ${n}`).join('\n')}\n\n🔙 *رجوع*\n\n✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
+                    const elites = sock.getElites?.() || [];
+                    if (!elites.length) return update(`✧━── ❝ 𝐍𝐗𝐁𝐀 ❞ ──━✧\n\n📋 القائمة فارغة.\n\n🔙 *رجوع*\n\n✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
+                    const list = elites.map((id, i) => `${i+1}. @${normalizeJid(id)}`).join('\n');
+                    return update(`✧━── ❝ 𝐍𝐗𝐁𝐀 ❞ ──━✧\n\n👑 *قائمة النخبة (${elites.length}):*\n\n${list}\n\n🔙 *رجوع*\n\n✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
                 } catch { return update('❌ تعذر جلب القائمة.\n\n🔙 *رجوع*'); }
             }
-            if (text === 'اضافة')    { await update('📱 ارسل الرقم:\nمثال: 966501234567\n\n🔙 *رجوع*'); state = 'ELITE_ADD'; return; }
-            if (text === 'حذف')      { await update('📱 ارسل الرقم للحذف:\n\n🔙 *رجوع*'); state = 'ELITE_DEL'; return; }
+            if (text === 'اضافة')    { await update('📱 ارسل الرقم:\nمثال: 966501234567\nاو منشن شخص\n\n🔙 *رجوع*'); state = 'ELITE_ADD'; return; }
+            if (text === 'حذف')      { await update('📱 ارسل الرقم للحذف:\nاو منشن شخص\n\n🔙 *رجوع*'); state = 'ELITE_DEL'; return; }
             if (text === 'مسح الكل') { await update('⚠️ *تاكيد مسح كل النخبة؟*\nاكتب *نعم* او *رجوع*'); state = 'ELITE_CLEAR'; return; }
             return;
         }
         if (state === 'ELITE_ADD') {
             if (text === 'رجوع') { await showEliteMenu(); state = 'ELITE'; return; }
-            const num = text.replace(/\D/g, '');
-            if (num.length < 9) return update('❌ رقم غير صحيح.');
-            try { await sock.addElite?.({ id: num + '@s.whatsapp.net' }); await update(`✅ تم اضافة [ ${num} ]`); }
-            catch (e) { await update(`❌ ${e?.message}`); }
-            await sleep(1200); await showEliteMenu(); state = 'ELITE'; return;
+            const ctxMentions = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+            const ctxReply    = m.message?.extendedTextMessage?.contextInfo?.participant;
+            let ids = [];
+            if (ctxMentions.length) ids = ctxMentions;
+            else if (ctxReply)       ids = [ctxReply];
+            else {
+                const num = text.replace(/\D/g, '');
+                if (num.length < 9) return update('❌ رقم غير صحيح.');
+                try {
+                    const check = await sock.onWhatsApp(num + '@s.whatsapp.net');
+                    ids = [check?.[0]?.jid || num + '@s.whatsapp.net'];
+                } catch { ids = [num + '@s.whatsapp.net']; }
+            }
+            try {
+                const res = await sock.addElite({ sock, ids });
+                let msg2 = '*إضافة النخبة*\n\n';
+                if (res?.success?.length) msg2 += '✅ ' + res.success.map(u => `@${normalizeJid(u.id)}`).join(', ') + ' تمت الإضافة\n';
+                if (res?.fail?.length)    msg2 += '⚠️ ' + res.fail.map(u => `@${normalizeJid(u.id)} (${u.error==='exist_already'?'موجود مسبقاً':u.error})`).join(', ');
+                await update(msg2.trim());
+            } catch (e) { await update(`❌ ${e?.message}`); }
+            await sleep(1500); await showEliteMenu(); state = 'ELITE'; return;
         }
         if (state === 'ELITE_DEL') {
             if (text === 'رجوع') { await showEliteMenu(); state = 'ELITE'; return; }
-            const num = text.replace(/\D/g, '');
-            if (num.length < 9) return update('❌ رقم غير صحيح.');
-            try { await sock.removeElite?.({ id: num + '@s.whatsapp.net' }); await update(`✅ تم حذف [ ${num} ]`); }
-            catch (e) { await update(`❌ ${e?.message}`); }
-            await sleep(1200); await showEliteMenu(); state = 'ELITE'; return;
+            const ctxMentions = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+            const ctxReply    = m.message?.extendedTextMessage?.contextInfo?.participant;
+            let ids = [];
+            if (ctxMentions.length) ids = ctxMentions;
+            else if (ctxReply)       ids = [ctxReply];
+            else {
+                const num = text.replace(/\D/g, '');
+                if (num.length < 9) return update('❌ رقم غير صحيح.');
+                ids = [num + '@s.whatsapp.net'];
+            }
+            try {
+                const res = await sock.rmElite({ sock, ids });
+                let msg2 = '*إزالة النخبة*\n\n';
+                if (res?.success?.length) msg2 += '✅ ' + res.success.map(u => `@${normalizeJid(u.id)}`).join(', ') + ' تمت الإزالة\n';
+                if (res?.fail?.length)    msg2 += '⚠️ ' + res.fail.map(u => `@${normalizeJid(u.id)} (${u.error==='not_exist'?'ليس نخبة أصلاً':u.error})`).join(', ');
+                await update(msg2.trim());
+            } catch (e) { await update(`❌ ${e?.message}`); }
+            await sleep(1500); await showEliteMenu(); state = 'ELITE'; return;
         }
         if (state === 'ELITE_CLEAR') {
             if (text === 'رجوع') { await showEliteMenu(); state = 'ELITE'; return; }
             if (text === 'نعم') {
-                try {
-                    const list = await sock.getEliteList?.() || [];
-                    for (const id of list) { try { await sock.removeElite?.({ id }); } catch {} }
-                    await update('✅ تم مسح الكل.');
-                } catch (e) { await update(`❌ ${e?.message}`); }
+                try { await sock.eliteReset?.({ sock }); await update('✅ تم مسح الكل.'); }
+                catch (e) { await update(`❌ ${e?.message}`); }
                 await sleep(1200); await showEliteMenu(); state = 'ELITE';
             }
             return;
@@ -947,8 +1093,17 @@ async function execute({ sock, msg }) {
         // PLUGINS
         // ══════════════════════════════════════════════════
         if (state === 'PLUGINS') {
-            if (text === 'رجوع') { await update(MAIN_MENU); state = 'MAIN'; return; }
-            if (text === 'عرض') {
+            if (text === 'رجوع')      { await update(MAIN_MENU); state = 'MAIN'; return; }
+            if (text === 'الاوامر')   { await showPluginsListMenu(); state = 'PLUGINS_LIST'; return; }
+            if (text === 'التعديل')   { await showPluginsEditMenu(); state = 'PLUGINS_EDIT_MENU'; return; }
+            if (text === 'جديد')      { await update('📝 اكتب اسم الامر الجديد:\n`بدون .js`\n\n🔙 *رجوع*'); state = 'PLUGIN_NEW_NAME'; return; }
+            return;
+        }
+
+        // ── PLUGINS_LIST ─────────────────────────────────
+        if (state === 'PLUGINS_LIST') {
+            if (text === 'رجوع') { await showPluginsMenu(); state = 'PLUGINS'; return; }
+            if (text === 'عرض الكل') {
                 const files = getAllPluginFiles();
                 let chunk = `✧━── ❝ 𝐏𝐋𝐔𝐆𝐈𝐍𝐒 ❞ ──━✧\n\n*الاوامر (${files.length}):*\n\n`, chunks = [];
                 for (const f of files) {
@@ -959,7 +1114,7 @@ async function execute({ sock, msg }) {
                 }
                 if (chunk) chunks.push(chunk);
                 for (const c of chunks) await sock.sendMessage(chatId, { text: c });
-                await update('🔙 *رجوع* | *بحث [اسم]* | *كود [اسم]*');
+                await update('🔙 *رجوع*');
                 return;
             }
             if (text.startsWith('بحث ')) {
@@ -967,7 +1122,7 @@ async function execute({ sock, msg }) {
                 const fp = await findPluginByCmd(cmdName);
                 if (!fp) return update(`❌ ما وجدت: ${cmdName}\n\n🔙 *رجوع*`);
                 tmp.targetFile = fp; tmp.targetCmd = cmdName;
-                await showPluginDetail(fp, cmdName); state = 'PLUGIN_EDIT'; return;
+                await showPluginDetail(fp, cmdName); state = 'PLUGIN_DETAIL'; return;
             }
             if (text.startsWith('كود ')) {
                 const cmdName = text.slice(4).trim();
@@ -977,21 +1132,35 @@ async function execute({ sock, msg }) {
                 catch (e) { await update(`❌ ${e?.message}`); }
                 return;
             }
-            if (text === 'اضافة امر') { await update('📝 اكتب اسم الامر:\n\n🔙 *رجوع*'); state = 'PLUGIN_NEW_NAME'; return; }
+            return;
+        }
+
+        // ── PLUGINS_EDIT_MENU ─────────────────────────────
+        if (state === 'PLUGINS_EDIT_MENU') {
+            if (text === 'رجوع') { await showPluginsMenu(); state = 'PLUGINS'; return; }
+            if (text.startsWith('بحث ')) {
+                const cmdName = text.slice(4).trim();
+                const fp = await findPluginByCmd(cmdName);
+                if (!fp) return update(`❌ ما وجدت: ${cmdName}\n\n🔙 *رجوع*`);
+                tmp.targetFile = fp; tmp.targetCmd = cmdName;
+                await showPluginDetail(fp, cmdName); state = 'PLUGIN_DETAIL'; return;
+            }
             if (text === 'طفي الكل') {
                 for (const f of getAllPluginFiles()) { if (f.includes('نظام')) continue; try { updatePluginField(f,'lock','on'); } catch {} }
                 await loadPlugins().catch(()=>{});
-                await update('🔒 تم قفل الكل.'); return;
+                await update('🔒 تم قفل الكل.\n\n🔙 *رجوع*'); return;
             }
             if (text === 'شغل الكل') {
                 for (const f of getAllPluginFiles()) { if (f.includes('نظام')) continue; try { updatePluginField(f,'lock','off'); } catch {} }
                 await loadPlugins().catch(()=>{});
-                await update('🔓 تم فتح الكل.'); return;
+                await update('🔓 تم فتح الكل.\n\n🔙 *رجوع*'); return;
             }
             return;
         }
-        if (state === 'PLUGIN_EDIT') {
-            if (text === 'رجوع') { await showPluginsMenu(); state = 'PLUGINS'; return; }
+
+        // ── PLUGIN_DETAIL (تفاصيل وتعديل امر واحد) ────────
+        if (state === 'PLUGIN_DETAIL') {
+            if (text === 'رجوع') { await showPluginsEditMenu(); state = 'PLUGINS_EDIT_MENU'; return; }
             const fp = tmp.targetFile, tc = tmp.targetCmd;
             if (!fp) return;
             if (text === 'كود') {
@@ -1014,10 +1183,10 @@ async function execute({ sock, msg }) {
             return;
         }
         if (state === 'PLUGIN_RENAME') {
-            if (text === 'رجوع') { await showPluginDetail(tmp.targetFile, tmp.targetCmd); state = 'PLUGIN_EDIT'; return; }
+            if (text === 'رجوع') { await showPluginDetail(tmp.targetFile, tmp.targetCmd); state = 'PLUGIN_DETAIL'; return; }
             try { updatePluginField(tmp.targetFile,'command',text.trim()); await loadPlugins().catch(()=>{}); } catch {}
             await update(`✅ ${tmp.targetCmd} ➔ ${text.trim()}`);
-            tmp.targetCmd = text.trim(); await sleep(1200); await showPluginDetail(tmp.targetFile, tmp.targetCmd); state = 'PLUGIN_EDIT'; return;
+            tmp.targetCmd = text.trim(); await sleep(1200); await showPluginDetail(tmp.targetFile, tmp.targetCmd); state = 'PLUGIN_DETAIL'; return;
         }
         if (state === 'PLUGIN_NEW_NAME') {
             if (text === 'رجوع') { await showPluginsMenu(); state = 'PLUGINS'; return; }
@@ -1094,7 +1263,7 @@ async function execute({ sock, msg }) {
         // ══════════════════════════════════════════════════
         if (state === 'CMDTOOLS') {
             if (text === 'رجوع') { await update(MAIN_MENU); state = 'MAIN'; return; }
-            if (text === 'تغيير اسم') { await update('✏️ اكتب اسم الامر الحالي:\n\n🔙 *رجوع*'); state = 'RENAME_WAIT'; return; }
+            if (text === 'تغيير اسم')  { await update('✏️ اكتب اسم الامر الحالي:\n\n🔙 *رجوع*'); state = 'RENAME_WAIT'; return; }
             if (text === 'فاحص الكود') { await update('🔍 اكتب اسم الامر:\n\n🔙 *رجوع*'); state = 'CODE_CHECK_WAIT'; return; }
             if (text === 'مسح كاش') {
                 react(sock, m, '⏳');
@@ -1132,7 +1301,7 @@ async function execute({ sock, msg }) {
                 report += '⚠️ *مشاكل:*\n';
                 if (!checkRes.ok) {
                     report += `🔴 Syntax Error\n`;
-                    if (checkRes.line) report += `السطر: ${checkRes.line}\n`;
+                    if (checkRes.line)     report += `السطر: ${checkRes.line}\n`;
                     if (checkRes.codeLine) report += `\`${checkRes.codeLine}\`\n`;
                     report += `\`${checkRes.error?.slice(0, 200)}\`\n`;
                 }
@@ -1145,113 +1314,51 @@ async function execute({ sock, msg }) {
         }
 
         // ══════════════════════════════════════════════════
-        // ADMIN
+        // ADMIN — قائمة رئيسية (فقط روتينج للفروع)
         // ══════════════════════════════════════════════════
         if (state === 'ADMIN') {
-            if (text === 'رجوع') { await update(MAIN_MENU); state = 'MAIN'; return; }
+            if (text === 'رجوع')         { await update(MAIN_MENU); state = 'MAIN'; return; }
+            if (text === 'الاعضاء')      { await showAdminMembersMenu();  state = 'ADMIN_MEMBERS';   return; }
+            if (text === 'الرسائل')      { await showAdminMessagesMenu(); state = 'ADMIN_MESSAGES';  return; }
+            if (text === 'المجموعة')     { await showAdminGroupMenu();    state = 'ADMIN_GROUP_SET'; return; }
+            if (text === 'المحتوى')      { await showAdminContentMenu();  state = 'ADMIN_CONTENT';   return; }
+            if (text === 'قفل المحتوى') { await showAdminLocksMenu();    state = 'ADMIN_LOCKS';     return; }
+            if (text === 'الادوات')      { await showAdminToolsMenu();    state = 'ADMIN_TOOLS';     return; }
+            return;
+        }
 
-            const memberActions = {
-                'رفع مشرف':'promote','تنزيل مشرف':'demote','طرد':'remove',
-                'حظر':'ban','الغاء حظر':'unban','كتم':'mute','الغاء كتم':'unmute',
-            };
-            if (memberActions[text]) {
-                if (text === 'كتم') { await update('⏱️ كم دقيقة؟ (مثال: 30)\nثم منشن أو رد\n\n🔙 *رجوع*'); tmp.adminAction = 'mute'; state = 'ADMIN_TARGET'; return; }
-                tmp.adminAction = memberActions[text];
-                await update(`↩️ منشن العضو او رد على رسالته لـ [ ${text} ]\n\n🔙 *رجوع*`);
-                state = 'ADMIN_TARGET'; return;
-            }
+        // ── ADMIN_MEMBERS ──────────────────────────────────
+        if (state === 'ADMIN_MEMBERS') {
+            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
 
             if (text === 'المشرفين') {
                 try {
                     const { meta } = await getAdminPerms();
                     const admins = (meta?.participants || []).filter(p => p.admin);
-                    if (!admins.length) return update('📭 لا يوجد مشرفين.');
+                    if (!admins.length) return update('📭 لا يوجد مشرفين.\n\n🔙 *رجوع*');
                     const list = admins.map((a,i)=>`${i+1}. @${normalizeJid(a.id)} ${a.admin==='superadmin'?'👑':''}`).join('\n');
                     await sock.sendMessage(chatId, { text: `👑 *المشرفون (${admins.length}):*\n\n${list}`, mentions: admins.map(a=>a.id) }, { quoted: m });
                 } catch (e) { await update(`❌ ${e?.message}`); }
                 return;
             }
-            if (text === 'تثبيت' || text === 'الغاء التثبيت') {
-                const ctx2 = m.message?.extendedTextMessage?.contextInfo;
-                if (!ctx2?.stanzaId) return update('↩️ رد على الرسالة اللي تبيها.');
-                const pinKey = { remoteJid: chatId, id: ctx2.stanzaId, participant: ctx2.participant, fromMe: false };
-                if (text === 'تثبيت') await tryAdminAction(() => sock.groupMessagePin(chatId, pinKey, 1, 86400), '📌');
-                else                  await tryAdminAction(() => sock.groupMessagePin(chatId, pinKey, 0),        '📌');
-                return;
-            }
-            if (text === 'مسح') {
-                const ctx2 = m.message?.extendedTextMessage?.contextInfo;
-                if (!ctx2?.stanzaId) return update('↩️ رد على الرسالة اللي تبيها.');
-                await tryAdminAction(() => sock.sendMessage(chatId, { delete: { remoteJid: chatId, fromMe: false, id: ctx2.stanzaId, participant: ctx2.participant } }), '🗑️');
-                return;
-            }
-            if (text === 'وضع اسم')   { await update('✏️ ارسل الاسم الجديد:\n\n🔙 *رجوع*'); state = 'ADMIN_SETNAME'; return; }
-            if (text === 'وضع وصف')   { await update('📝 ارسل الوصف الجديد:\n\n🔙 *رجوع*'); state = 'ADMIN_SETDESC'; return; }
-            if (text === 'وضع صورة')  { await update('🖼️ ارسل أو اقتبس صورة:\n\n🔙 *رجوع*'); state = 'ADMIN_SETIMG'; return; }
-            if (text === 'قفل المحادثة') { await tryAdminAction(() => sock.groupSettingUpdate(chatId, 'announcement'), '🔒'); return; }
-            if (text === 'فتح المحادثة') { await tryAdminAction(() => sock.groupSettingUpdate(chatId, 'not_announcement'), '🔓'); return; }
-            if (text === 'رابط') {
-                try { const code = await sock.groupInviteCode(chatId); await update(`🔗 *رابط المجموعة:*\nhttps://chat.whatsapp.com/${code}\n\n🔙 *رجوع*`); }
-                catch (e) { await update(`❌ ${e?.message}`); }
-                return;
-            }
-            if (text === 'وضع ترحيب') { await update('👋 اكتب رسالة الترحيب:\nاستخدم {name} للاسم و {number} للرقم\n\n🔙 *رجوع*'); state = 'ADMIN_SETWELCOME'; return; }
-            if (text === 'ترحيب') {
-                const wf = grpFile('welcome', chatId);
-                if (!fs.existsSync(wf)) return update('❌ لم يُضبط ترحيب بعد.\n\nاكتب *وضع ترحيب* لضبطه.\n\n🔙 *رجوع*');
-                const { text: wt } = readJSON(wf, {});
-                await update(`📋 *رسالة الترحيب:*\n\n${wt}\n\nاكتب *حذف* لحذفه\n🔙 *رجوع*`);
-                state = 'ADMIN_WELCOME_VIEW'; return;
-            }
-            if (text === 'وضع قوانين') { await update('📜 اكتب القوانين:\n\n🔙 *رجوع*'); state = 'ADMIN_SETRULES'; return; }
-            if (text === 'قوانين') {
-                const rf = grpFile('rules', chatId);
-                if (!fs.existsSync(rf)) return update('❌ لم تُضبط قوانين بعد.\n\n🔙 *رجوع*');
-                const { text: rt } = readJSON(rf, {});
-                await update(`📜 *القوانين:*\n\n${rt}\n\nاكتب *حذف* لحذفها\n🔙 *رجوع*`);
-                state = 'ADMIN_RULES_VIEW'; return;
-            }
-            if (text === 'كلمات ممنوعة') { await showBadwords(); state = 'ADMIN_BADWORDS'; return; }
 
-            // قفل المحتوى
-            const LOCK_MAP = { 'قفل الروابط':'antiLink','قفل الصور':'images','قفل الفيديو':'videos','قفل البوتات':'bots' };
-            if (LOCK_MAP[text]) {
-                const p = readProt(); p[LOCK_MAP[text]] = p[LOCK_MAP[text]]==='on'?'off':'on'; writeProt(p);
-                react(sock, m, p[LOCK_MAP[text]]==='on'?'🔒':'🔓');
-                await update(`${p[LOCK_MAP[text]]==='on'?'🔒 شُغِّل':'🔓 أُوقف'}: *${text}*\n\n🔙 *رجوع*`);
-                return;
+            const memberActions = {
+                'رفع مشرف':'promote', 'تنزيل مشرف':'demote',
+                'طرد':'remove', 'حظر':'ban', 'الغاء حظر':'unban',
+                'كتم':'mute', 'الغاء كتم':'unmute',
+            };
+            if (memberActions[text]) {
+                tmp.adminAction = memberActions[text];
+                const hint = text === 'كتم' ? '⏱️ كم دقيقة؟ (مثال: 30)\nثم منشن او رد' : '↩️ منشن العضو او رد على رسالته';
+                await update(`${hint}\n\n🔙 *رجوع*`);
+                state = 'ADMIN_TARGET'; return;
             }
-
-            if (text === 'معلومات') {
-                try {
-                    const { meta } = await getAdminPerms();
-                    if (!meta) return update('❌ تعذر جلب المعلومات.');
-                    await update(
-`📊 *معلومات المجموعة:*
-
-📌 *الاسم:* ${meta.subject}
-👥 *الأعضاء:* ${meta.participants.length}
-🆔 *الID:* ${chatId.split('@')[0]}
-📅 *تاريخ الإنشاء:* ${new Date(meta.creation * 1000).toLocaleDateString('ar')}
-
-🔙 *رجوع*`);
-                } catch (e) { await update(`❌ ${e?.message}`); }
-                return;
-            }
-            if (text === 'اذاعة') { await update('📢 اكتب رسالة الإذاعة:\n\n🔙 *رجوع*'); state = 'ADMIN_BROADCAST'; return; }
-            if (text === 'تحديث') {
-                react(sock, m, '⏳');
-                try { await loadPlugins(); react(sock, m, '✅'); await update('✅ تم تحديث الاوامر.\n\n🔙 *رجوع*'); }
-                catch (e) { react(sock, m, '❌'); await update(`❌ ${e?.message}`); }
-                return;
-            }
-            if (text === 'انضم') { await update('🔗 ارسل رابط المجموعة:\n\n🔙 *رجوع*'); state = 'ADMIN_JOIN'; return; }
-            if (text === 'خروج') { await update('⚠️ تأكيد الخروج؟\nاكتب *نعم* او *رجوع*'); state = 'ADMIN_LEAVE'; return; }
             return;
         }
 
+        // ── ADMIN_TARGET ───────────────────────────────────
         if (state === 'ADMIN_TARGET') {
-            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
+            if (text === 'رجوع') { await showAdminMembersMenu(); state = 'ADMIN_MEMBERS'; return; }
             const target = await resolveTarget(sock, chatId, m);
             if (!target) return update('❌ منشن العضو او رد على رسالته.');
             const action = tmp.adminAction;
@@ -1282,20 +1389,58 @@ async function execute({ sock, msg }) {
             } else if (action === 'unmute') {
                 await tryAdminAction(() => sock.groupParticipantsUpdate(chatId, [target], 'promote'), '🔊');
             }
-            await sleep(600); await showAdminMenu(); state = 'ADMIN'; return;
+            await sleep(600); await showAdminMembersMenu(); state = 'ADMIN_MEMBERS'; return;
+        }
+
+        // ── ADMIN_MESSAGES ─────────────────────────────────
+        if (state === 'ADMIN_MESSAGES') {
+            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
+            if (text === 'تثبيت' || text === 'الغاء التثبيت') {
+                const ctx2 = m.message?.extendedTextMessage?.contextInfo;
+                if (!ctx2?.stanzaId) return update('↩️ رد على الرسالة اللي تبيها.');
+                const pinKey = { remoteJid: chatId, id: ctx2.stanzaId, participant: ctx2.participant, fromMe: false };
+                if (text === 'تثبيت') await tryAdminAction(() => sock.groupMessagePin(chatId, pinKey, 1, 86400), '📌');
+                else                  await tryAdminAction(() => sock.groupMessagePin(chatId, pinKey, 0), '📌');
+                return;
+            }
+            if (text === 'مسح') {
+                const ctx2 = m.message?.extendedTextMessage?.contextInfo;
+                if (!ctx2?.stanzaId) return update('↩️ رد على الرسالة اللي تبيها.');
+                await tryAdminAction(() => sock.sendMessage(chatId, { delete: { remoteJid: chatId, fromMe: false, id: ctx2.stanzaId, participant: ctx2.participant } }), '🗑️');
+                return;
+            }
+            return;
+        }
+
+        // ── ADMIN_GROUP_SET ────────────────────────────────
+        if (state === 'ADMIN_GROUP_SET') {
+            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
+            if (text === 'وضع اسم')       { await update('✏️ ارسل الاسم الجديد:\n\n🔙 *رجوع*'); state = 'ADMIN_SETNAME'; return; }
+            if (text === 'وضع وصف')       { await update('📝 ارسل الوصف الجديد:\n\n🔙 *رجوع*'); state = 'ADMIN_SETDESC'; return; }
+            if (text === 'وضع صورة')      { await update('🖼️ ارسل او اقتبس صورة:\n\n🔙 *رجوع*'); state = 'ADMIN_SETIMG'; return; }
+            if (text === 'قفل المحادثة')  { await tryAdminAction(() => sock.groupSettingUpdate(chatId, 'announcement'), '🔒'); return; }
+            if (text === 'فتح المحادثة')  { await tryAdminAction(() => sock.groupSettingUpdate(chatId, 'not_announcement'), '🔓'); return; }
+            if (text === 'رابط') {
+                try { const code = await sock.groupInviteCode(chatId); await update(`🔗 *رابط المجموعة:*\nhttps://chat.whatsapp.com/${code}\n\n🔙 *رجوع*`); }
+                catch (e) { await update(`❌ ${e?.message}`); }
+                return;
+            }
+            if (text === 'انضم') { await update('🔗 ارسل رابط المجموعة:\n\n🔙 *رجوع*'); state = 'ADMIN_JOIN'; return; }
+            if (text === 'خروج') { await update('⚠️ تاكيد الخروج؟\nاكتب *نعم* او *رجوع*'); state = 'ADMIN_LEAVE'; return; }
+            return;
         }
         if (state === 'ADMIN_SETNAME') {
-            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
+            if (text === 'رجوع') { await showAdminGroupMenu(); state = 'ADMIN_GROUP_SET'; return; }
             react(sock, m, '⏳'); await tryAdminAction(() => sock.groupUpdateSubject(chatId, text), '✅');
-            await sleep(800); await showAdminMenu(); state = 'ADMIN'; return;
+            await sleep(800); await showAdminGroupMenu(); state = 'ADMIN_GROUP_SET'; return;
         }
         if (state === 'ADMIN_SETDESC') {
-            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
+            if (text === 'رجوع') { await showAdminGroupMenu(); state = 'ADMIN_GROUP_SET'; return; }
             react(sock, m, '⏳'); await tryAdminAction(() => sock.groupUpdateDescription(chatId, text), '✅');
-            await sleep(800); await showAdminMenu(); state = 'ADMIN'; return;
+            await sleep(800); await showAdminGroupMenu(); state = 'ADMIN_GROUP_SET'; return;
         }
         if (state === 'ADMIN_SETIMG') {
-            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
+            if (text === 'رجوع') { await showAdminGroupMenu(); state = 'ADMIN_GROUP_SET'; return; }
             const ctx2   = m.message?.extendedTextMessage?.contextInfo;
             const imgMsg = m.message?.imageMessage || ctx2?.quotedMessage?.imageMessage;
             if (!imgMsg) return update('🖼️ ارسل او اقتبس صورة فقط.\n\n🔙 *رجوع*');
@@ -1305,40 +1450,118 @@ async function execute({ sock, msg }) {
                 const buf = await downloadMediaMessage(target2, 'buffer', {});
                 await tryAdminAction(() => sock.updateProfilePicture(chatId, buf), '✅');
             } catch (e) { react(sock, m, '❌'); await update(`❌ ${e?.message}`); }
-            await sleep(800); await showAdminMenu(); state = 'ADMIN'; return;
+            await sleep(800); await showAdminGroupMenu(); state = 'ADMIN_GROUP_SET'; return;
+        }
+        if (state === 'ADMIN_JOIN') {
+            if (text === 'رجوع') { await showAdminGroupMenu(); state = 'ADMIN_GROUP_SET'; return; }
+            const match = text.match(/chat\.whatsapp\.com\/([0-9A-Za-z]{20,24})/i);
+            if (!match) return update('❌ رابط غير صحيح.\n\n🔙 *رجوع*');
+            react(sock, m, '⏳');
+            try { await sock.groupAcceptInvite(match[1]); react(sock, m, '✅'); await update('✅ تم الانضمام.'); }
+            catch (e) { react(sock, m, '❌'); await update(`❌ ${e?.message}`); }
+            await sleep(800); await showAdminGroupMenu(); state = 'ADMIN_GROUP_SET'; return;
+        }
+        if (state === 'ADMIN_LEAVE') {
+            if (text === 'رجوع') { await showAdminGroupMenu(); state = 'ADMIN_GROUP_SET'; return; }
+            if (text === 'نعم') { try { await sock.groupLeave(chatId); } catch (e) { await update(`❌ ${e?.message}`); } }
+            state = 'ADMIN_GROUP_SET'; return;
+        }
+
+        // ── ADMIN_CONTENT ──────────────────────────────────
+        if (state === 'ADMIN_CONTENT') {
+            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
+            if (text === 'وضع ترحيب') { await update('👋 اكتب رسالة الترحيب:\nاستخدم {name} للاسم و {number} للرقم\n\n🔙 *رجوع*'); state = 'ADMIN_SETWELCOME'; return; }
+            if (text === 'ترحيب') {
+                const wf = grpFile('welcome', chatId);
+                if (!fs.existsSync(wf)) return update('❌ لم يُضبط ترحيب بعد.\n\nاكتب *وضع ترحيب* لضبطه.\n\n🔙 *رجوع*');
+                const { text: wt } = readJSON(wf, {});
+                await update(`📋 *رسالة الترحيب:*\n\n${wt}\n\nاكتب *حذف* لحذفه\n🔙 *رجوع*`);
+                state = 'ADMIN_WELCOME_VIEW'; return;
+            }
+            if (text === 'وضع قوانين') { await update('📜 اكتب القوانين:\n\n🔙 *رجوع*'); state = 'ADMIN_SETRULES'; return; }
+            if (text === 'قوانين') {
+                const rf = grpFile('rules', chatId);
+                if (!fs.existsSync(rf)) return update('❌ لم تُضبط قوانين بعد.\n\n🔙 *رجوع*');
+                const { text: rt } = readJSON(rf, {});
+                await update(`📜 *القوانين:*\n\n${rt}\n\nاكتب *حذف* لحذفها\n🔙 *رجوع*`);
+                state = 'ADMIN_RULES_VIEW'; return;
+            }
+            if (text === 'كلمات ممنوعة') { await showBadwords(); state = 'ADMIN_BADWORDS'; return; }
+            return;
         }
         if (state === 'ADMIN_SETWELCOME') {
-            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
+            if (text === 'رجوع') { await showAdminContentMenu(); state = 'ADMIN_CONTENT'; return; }
             writeJSON(grpFile('welcome', chatId), { text });
             react(sock, m, '✅');
             await update(`✅ تم حفظ رسالة الترحيب.\n\n🔙 *رجوع*`);
-            await sleep(800); await showAdminMenu(); state = 'ADMIN'; return;
+            await sleep(800); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; return;
         }
         if (state === 'ADMIN_SETRULES') {
-            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
+            if (text === 'رجوع') { await showAdminContentMenu(); state = 'ADMIN_CONTENT'; return; }
             writeJSON(grpFile('rules', chatId), { text });
             react(sock, m, '✅');
-            await sleep(800); await showAdminMenu(); state = 'ADMIN'; return;
+            await sleep(800); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; return;
         }
         if (state === 'ADMIN_WELCOME_VIEW') {
-            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
-            if (text === 'حذف') { try { fs.removeSync(grpFile('welcome', chatId)); react(sock, m, '🗑️'); } catch {} await sleep(400); await showAdminMenu(); state = 'ADMIN'; }
+            if (text === 'رجوع') { await showAdminContentMenu(); state = 'ADMIN_CONTENT'; return; }
+            if (text === 'حذف') { try { fs.removeSync(grpFile('welcome', chatId)); react(sock, m, '🗑️'); } catch {} await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
             return;
         }
         if (state === 'ADMIN_RULES_VIEW') {
-            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
-            if (text === 'حذف') { try { fs.removeSync(grpFile('rules', chatId)); react(sock, m, '🗑️'); } catch {} await sleep(400); await showAdminMenu(); state = 'ADMIN'; }
+            if (text === 'رجوع') { await showAdminContentMenu(); state = 'ADMIN_CONTENT'; return; }
+            if (text === 'حذف') { try { fs.removeSync(grpFile('rules', chatId)); react(sock, m, '🗑️'); } catch {} await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
             return;
         }
         if (state === 'ADMIN_BADWORDS') {
-            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
+            if (text === 'رجوع') { await showAdminContentMenu(); state = 'ADMIN_CONTENT'; return; }
             const bf = grpFile('badwords', chatId); let words = readJSON(bf, []);
             if (text.startsWith('اضافة ')) { const w = text.slice(6).trim(); if (w) { words.push(w.toLowerCase()); writeJSON(bf, words); react(sock, m, '✅'); } await sleep(400); await showBadwords(); return; }
             if (text.startsWith('حذف '))   { writeJSON(bf, words.filter(x => x !== text.slice(4).trim())); react(sock, m, '🗑️'); await sleep(400); await showBadwords(); return; }
             return;
         }
-        if (state === 'ADMIN_BROADCAST') {
+
+        // ── ADMIN_LOCKS ────────────────────────────────────
+        if (state === 'ADMIN_LOCKS') {
             if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
+            const LOCK_MAP = { 'قفل الروابط':'antiLink','قفل الصور':'images','قفل الفيديو':'videos','قفل البوتات':'bots' };
+            if (LOCK_MAP[text]) {
+                const p = readProt(); p[LOCK_MAP[text]] = p[LOCK_MAP[text]]==='on'?'off':'on'; writeProt(p);
+                react(sock, m, p[LOCK_MAP[text]]==='on'?'🔒':'🔓');
+                await sleep(500); await showAdminLocksMenu(); return;
+            }
+            return;
+        }
+
+        // ── ADMIN_TOOLS ────────────────────────────────────
+        if (state === 'ADMIN_TOOLS') {
+            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
+            if (text === 'معلومات') {
+                try {
+                    const { meta } = await getAdminPerms();
+                    if (!meta) return update('❌ تعذر جلب المعلومات.\n\n🔙 *رجوع*');
+                    await update(
+`📊 *معلومات المجموعة:*
+
+📌 *الاسم:* ${meta.subject}
+👥 *الاعضاء:* ${meta.participants.length}
+🆔 *الID:* ${chatId.split('@')[0]}
+📅 *تاريخ الانشاء:* ${new Date(meta.creation * 1000).toLocaleDateString('ar')}
+
+🔙 *رجوع*`);
+                } catch (e) { await update(`❌ ${e?.message}`); }
+                return;
+            }
+            if (text === 'اذاعة') { await update('📢 اكتب رسالة الإذاعة:\n\n🔙 *رجوع*'); state = 'ADMIN_BROADCAST'; return; }
+            if (text === 'تحديث') {
+                react(sock, m, '⏳');
+                try { await loadPlugins(); react(sock, m, '✅'); await update('✅ تم تحديث الاوامر.\n\n🔙 *رجوع*'); }
+                catch (e) { react(sock, m, '❌'); await update(`❌ ${e?.message}`); }
+                return;
+            }
+            return;
+        }
+        if (state === 'ADMIN_BROADCAST') {
+            if (text === 'رجوع') { await showAdminToolsMenu(); state = 'ADMIN_TOOLS'; return; }
             react(sock, m, '⏳');
             try {
                 const chats = await sock.groupFetchAllParticipating();
@@ -1346,21 +1569,7 @@ async function execute({ sock, msg }) {
                 for (const gid of Object.keys(chats)) { try { await sock.sendMessage(gid, { text }); sent++; } catch {} await sleep(500); }
                 react(sock, m, '✅'); await update(`✅ الإرسال لـ ${sent} مجموعة.`);
             } catch (e) { await update(`❌ ${e?.message}`); }
-            await sleep(1000); await showAdminMenu(); state = 'ADMIN'; return;
-        }
-        if (state === 'ADMIN_JOIN') {
-            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
-            const match = text.match(/chat\.whatsapp\.com\/([0-9A-Za-z]{20,24})/i);
-            if (!match) return update('❌ رابط غير صحيح.\n\n🔙 *رجوع*');
-            react(sock, m, '⏳');
-            try { await sock.groupAcceptInvite(match[1]); react(sock, m, '✅'); await update('✅ تم الانضمام.'); }
-            catch (e) { react(sock, m, '❌'); await update(`❌ ${e?.message}`); }
-            await sleep(800); await showAdminMenu(); state = 'ADMIN'; return;
-        }
-        if (state === 'ADMIN_LEAVE') {
-            if (text === 'رجوع') { await showAdminMenu(); state = 'ADMIN'; return; }
-            if (text === 'نعم') { try { await sock.groupLeave(chatId); } catch (e) { await update(`❌ ${e?.message}`); } }
-            state = 'ADMIN'; return;
+            await sleep(1000); await showAdminToolsMenu(); state = 'ADMIN_TOOLS'; return;
         }
 
     }; // نهاية listener
@@ -1372,7 +1581,7 @@ async function execute({ sock, msg }) {
         const platform = detectPlatform(url) || 'رابط';
         const icon     = audioOnly ? '🎵' : '🎬';
         react(sock, m, '⏳');
-        await update(`${icon} *جاري تحميل ${platform}...*\nقد يأخذ بضع ثوانٍ.`);
+        await update(`${icon} *جاري تحميل ${platform}...*\nقد ياخذ بضع ثوانٍ.`);
         try {
             const { filePath, ext, cleanup } = await ytdlpDownload(url, { audio: audioOnly });
             const isVideo = ['mp4','mkv','webm','mov','avi'].includes(ext);
@@ -1380,7 +1589,7 @@ async function execute({ sock, msg }) {
             const isImage = ['jpg','jpeg','png','webp','gif'].includes(ext);
             if (fs.statSync(filePath).size > 60 * 1024 * 1024) {
                 cleanup();
-                return update('❌ الملف أكبر من 60MB — جرّب الصوت بدل الفيديو.\n\n🔙 *رجوع*');
+                return update('❌ الملف اكبر من 60MB — جرّب الصوت بدل الفيديو.\n\n🔙 *رجوع*');
             }
             const buffer = fs.readFileSync(filePath); cleanup();
             if (isVideo)      await sock.sendMessage(chatId, { video: buffer, caption: `${icon} ${platform}` }, { quoted: m });
@@ -1402,8 +1611,9 @@ async function execute({ sock, msg }) {
     }
 
     // ══════════════════════════════════════════════════════
-    //  قوائم
+    //  قوائم العرض
     // ══════════════════════════════════════════════════════
+
     async function showEliteMenu() {
         await update(
 `✧━── ❝ 𝐍𝐗𝐁𝐀 ❞ ──━✧
@@ -1430,22 +1640,52 @@ async function execute({ sock, msg }) {
         await update(
 `✧━── ❝ 𝐏𝐋𝐔𝐆𝐈𝐍𝐒 ❞ ──━✧
 
-📦 الاوامر: *${count}*
+📦 الاوامر المحملة: *${count}*
 
-✦ *عرض*
+✦ *الاوامر*
+\`📋 عرض وبحث الاوامر\`
+
+✦ *التعديل*
+\`⚙️ تعديل وضبط الاوامر\`
+
+✦ *جديد*
+\`➕ إضافة امر جديد\`
+
+🔙 *رجوع*
+
+✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
+    }
+
+    async function showPluginsListMenu() {
+        await update(
+`✧━── ❝ 𝐋𝐈𝐒𝐓 ❞ ──━✧
+
+✦ *عرض الكل*
 \`📋 قائمة كل الاوامر\`
 
 ✦ *بحث [اسم]*
-\`🔍 تفاصيل وتعديل\`
+\`🔍 تفاصيل امر معين\`
 
 ✦ *كود [اسم]*
-\`💻 تحميل الكود\`
+\`💻 تحميل ملف الامر\`
 
-✦ *اضافة امر*
-\`➕ امر جديد\`
+🔙 *رجوع*
 
-✦ *طفي الكل* | *شغل الكل*
-\`🔒 قفل او فتح الكل\`
+✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
+    }
+
+    async function showPluginsEditMenu() {
+        await update(
+`✧━── ❝ 𝐄𝐃𝐈𝐓 ❞ ──━✧
+
+✦ *بحث [اسم]*
+\`✏️ تعديل امر معين\`
+
+✦ *طفي الكل*
+\`🔒 قفل جميع الاوامر\`
+
+✦ *شغل الكل*
+\`🔓 فتح جميع الاوامر\`
 
 🔙 *رجوع*
 
@@ -1457,16 +1697,22 @@ async function execute({ sock, msg }) {
         await update(
 `✧━── ❝ 𝐏𝐋𝐔𝐆𝐈𝐍 ❞ ──━✧
 
-*[ ${cmd} ] 📋*
+*[ ${cmd} ]*
 
 ✦ نخبة:     ${elite==='on'?'✅':'❌'}
 ✦ قفل:      ${lock==='on'?'✅':'❌'}
 ✦ مجموعات:  ${group?'✅':'❌'}
 ✦ خاص:      ${prv?'✅':'❌'}
 
-\`نخبة | عام | قفل | فتح\`
-\`مجموعات | خاص | للجميع\`
-\`تغيير الاسم | كود\`
+✦ *نخبة*    — تعيين للنخبة
+✦ *عام*     — تعيين للعموم
+✦ *قفل*     — تعطيل الامر
+✦ *فتح*     — تفعيل الامر
+✦ *مجموعات* — تخصيص للمجموعات
+✦ *خاص*     — تخصيص للخاص
+✦ *للجميع*  — متاح للكل
+✦ *تغيير الاسم* — تغيير اسم الامر
+✦ *كود*     — تحميل الملف
 
 🔙 *رجوع*
 
@@ -1485,9 +1731,9 @@ async function execute({ sock, msg }) {
 
 *او ارسل رابط مباشرة*
 
-*المصادر:*
+المصادر:
 يوتيوب | انستقرام | تيك توك
-فيسبوك | بنترست | تويتر | ساوند كلاود
+فيسبوك | بنترست | تويتر | ساوند
 
 🔙 *رجوع*
 
@@ -1512,7 +1758,8 @@ ${topCmds}
 👤 *اكثر المستخدمين:*
 ${topUsers}
 
-\`مسح\` لتصفير | 🔙 *رجوع*
+✦ *مسح* — تصفير الإحصاءات
+🔙 *رجوع*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
@@ -1526,7 +1773,7 @@ ${topUsers}
 \`💥 حماية من رسائل التجميد\`
 
 ✦ *انتي لينكات* ${s('antiLink')}
-\`🔗 حذف أي رابط بالمجموعة\`
+\`🔗 حذف اي رابط بالمجموعة\`
 
 ✦ *انتي حذف* ${s('antiDelete')}
 \`🗑️ إظهار الرسائل المحذوفة\`
@@ -1540,7 +1787,7 @@ ${topUsers}
 ✦ *انتي خاص* ${s('antiPrivate')}
 \`🚫 حظر من يراسل البوت خاص\`
 
-\`اكتب اسم الميزة لتشغيلها أو إيقافها\`
+اكتب اسم الميزة لتشغيلها او إيقافها
 🔙 *رجوع*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
@@ -1551,7 +1798,7 @@ ${topUsers}
 `✧━── ❝ 𝐂𝐌𝐃 𝐓𝐎𝐎𝐋𝐒 ❞ ──━✧
 
 ✦ *تغيير اسم*
-\`✏️ تغيير اسم امر\`
+\`✏️ تغيير اسم امر موجود\`
 
 ✦ *فاحص الكود*
 \`🔍 فحص syntax البلاجن\`
@@ -1564,34 +1811,183 @@ ${topUsers}
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
 
+    // ── ADMIN — القائمة الرئيسية (وصف قصير لكل فرع) ─────
     async function showAdminMenu() {
         await update(
 `✧━── ❝ 𝐀𝐃𝐌𝐈𝐍 ❞ ──━✧
 
-*👥 الاعضاء:*
-\`رفع مشرف | تنزيل مشرف | المشرفين\`
-\`طرد | حظر | الغاء حظر\`
-\`كتم [دقائق] | الغاء كتم\`
+✦ *الاعضاء*
+\`👥 رفع وطرد وحظر وكتم\`
 
-*📌 الرسائل:*
-\`تثبيت | الغاء التثبيت | مسح\`
+✦ *الرسائل*
+\`📌 تثبيت ومسح الرسائل\`
 
-*⚙️ المجموعة:*
-\`وضع اسم | وضع وصف | وضع صورة\`
-\`قفل المحادثة | فتح المحادثة | رابط\`
+✦ *المجموعة*
+\`⚙️ اسم ووصف وصورة وإعدادات\`
 
-*👋 المحتوى:*
-\`وضع ترحيب | ترحيب\`
-\`وضع قوانين | قوانين\`
-\`كلمات ممنوعة\`
+✦ *المحتوى*
+\`👋 ترحيب وقوانين وكلمات ممنوعة\`
 
-*🔒 قفل المحتوى:*
-\`قفل الروابط | قفل الصور\`
-\`قفل الفيديو | قفل البوتات\`
+✦ *قفل المحتوى*
+\`🔒 منع انواع معينة من المحتوى\`
 
-*🤖 ادوات:*
-\`معلومات | اذاعة | تحديث\`
-\`انضم | خروج\`
+✦ *الادوات*
+\`🤖 اذاعة ومعلومات وتحديث\`
+
+🔙 *رجوع*
+
+✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
+    }
+
+    // ── ADMIN_MEMBERS menu ────────────────────────────────
+    async function showAdminMembersMenu() {
+        await update(
+`✧━── ❝ 𝐌𝐄𝐌𝐁𝐄𝐑𝐒 ❞ ──━✧
+
+✦ *رفع مشرف*
+\`👑 ترقية عضو لمشرف\`
+
+✦ *تنزيل مشرف*
+\`⬇️ إزالة صلاحيات المشرف\`
+
+✦ *المشرفين*
+\`📋 عرض قائمة المشرفين\`
+
+✦ *طرد*
+\`🚪 طرد عضو من المجموعة\`
+
+✦ *حظر*
+\`🔨 طرد وحظر العضو\`
+
+✦ *الغاء حظر*
+\`✅ رفع الحظر\`
+
+✦ *كتم*
+\`🔇 كتم عضو مؤقتاً\`
+
+✦ *الغاء كتم*
+\`🔊 رفع الكتم\`
+
+🔙 *رجوع*
+
+✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
+    }
+
+    // ── ADMIN_MESSAGES menu ───────────────────────────────
+    async function showAdminMessagesMenu() {
+        await update(
+`✧━── ❝ 𝐌𝐄𝐒𝐒𝐀𝐆𝐄𝐒 ❞ ──━✧
+
+✦ *تثبيت*
+\`📌 تثبيت رسالة (رد عليها)\`
+
+✦ *الغاء التثبيت*
+\`📌 إلغاء تثبيت رسالة\`
+
+✦ *مسح*
+\`🗑️ مسح رسالة (رد عليها)\`
+
+🔙 *رجوع*
+
+✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
+    }
+
+    // ── ADMIN_GROUP_SET menu ──────────────────────────────
+    async function showAdminGroupMenu() {
+        await update(
+`✧━── ❝ 𝐆𝐑𝐎𝐔𝐏 ❞ ──━✧
+
+✦ *وضع اسم*
+\`✏️ تغيير اسم المجموعة\`
+
+✦ *وضع وصف*
+\`📝 تغيير وصف المجموعة\`
+
+✦ *وضع صورة*
+\`🖼️ تغيير صورة المجموعة\`
+
+✦ *قفل المحادثة*
+\`🔒 منع الاعضاء من الكتابة\`
+
+✦ *فتح المحادثة*
+\`🔓 السماح للاعضاء بالكتابة\`
+
+✦ *رابط*
+\`🔗 الحصول على رابط الدعوة\`
+
+✦ *انضم*
+\`✅ الانضمام لمجموعة برابط\`
+
+✦ *خروج*
+\`🚪 مغادرة هذه المجموعة\`
+
+🔙 *رجوع*
+
+✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
+    }
+
+    // ── ADMIN_CONTENT menu ────────────────────────────────
+    async function showAdminContentMenu() {
+        await update(
+`✧━── ❝ 𝐂𝐎𝐍𝐓𝐄𝐍𝐓 ❞ ──━✧
+
+✦ *وضع ترحيب*
+\`👋 ضبط رسالة ترحيب الاعضاء\`
+
+✦ *ترحيب*
+\`📋 عرض او حذف الترحيب\`
+
+✦ *وضع قوانين*
+\`📜 ضبط قوانين المجموعة\`
+
+✦ *قوانين*
+\`📋 عرض او حذف القوانين\`
+
+✦ *كلمات ممنوعة*
+\`🚫 إدارة قائمة الكلمات المحظورة\`
+
+🔙 *رجوع*
+
+✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
+    }
+
+    // ── ADMIN_LOCKS menu ──────────────────────────────────
+    async function showAdminLocksMenu() {
+        const p = readProt(), s = k => p[k]==='on'?'🔒':'🔓';
+        await update(
+`✧━── ❝ 𝐋𝐎𝐂𝐊𝐒 ❞ ──━✧
+
+✦ *قفل الروابط* ${s('antiLink')}
+\`🔗 منع نشر الروابط\`
+
+✦ *قفل الصور* ${s('images')}
+\`🖼️ منع ارسال الصور\`
+
+✦ *قفل الفيديو* ${s('videos')}
+\`🎬 منع ارسال الفيديو\`
+
+✦ *قفل البوتات* ${s('bots')}
+\`🤖 منع ردود البوتات الاخرى\`
+
+اكتب اسم القفل لتشغيله او إيقافه
+🔙 *رجوع*
+
+✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
+    }
+
+    // ── ADMIN_TOOLS menu ──────────────────────────────────
+    async function showAdminToolsMenu() {
+        await update(
+`✧━── ❝ 𝐓𝐎𝐎𝐋𝐒 ❞ ──━✧
+
+✦ *معلومات*
+\`ℹ️ معلومات المجموعة\`
+
+✦ *اذاعة*
+\`📢 إرسال رسالة لكل المجموعات\`
+
+✦ *تحديث*
+\`🔄 إعادة تحميل الاوامر\`
 
 🔙 *رجوع*
 
@@ -1608,8 +2004,9 @@ ${topUsers}
 *الكلمات الممنوعة 🚫:*
 ${list}
 
-\`اضافة [كلمة]\`
-\`حذف [كلمة]\`
+✦ *اضافة [كلمة]*
+✦ *حذف [كلمة]*
+
 🔙 *رجوع*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
