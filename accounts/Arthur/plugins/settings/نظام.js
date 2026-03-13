@@ -20,7 +20,6 @@ import {
     downloadMediaMessage,
     downloadContentFromMessage,
     jidDecode,
-    generateMessageID,
 } from '@whiskeysockets/baileys';
 
 const execAsync   = promisify(exec);
@@ -65,7 +64,7 @@ const reactInput = (sock, m, text) => {
 
 // normalizeJid — مطابق تماماً لـ messages.js
 const normalizeJid = jid =>
-    jid ? jid.split('@')[0].split(':')[0] : '';
+    jid ? jid.split('@')[0].split(':')[0].replace(/\D/g, '') : '';
 
 const getBotJid = sock =>
     (jidDecode(sock.user?.id)?.user ||
@@ -193,10 +192,14 @@ function quickLint(filePath) {
 }
 
 async function checkPluginSyntax(filePath) {
+    const tmpCheck = path.join(os.tmpdir(), `_check_${Date.now()}.mjs`);
     try {
-        await execAsync(`node --input-type=module --check < "${filePath}"`);
+        fs.copyFileSync(filePath, tmpCheck);
+        await execAsync(`node --input-type=module --check "${tmpCheck}"`);
+        try { fs.unlinkSync(tmpCheck); } catch {}
         return { ok: true };
     } catch (e) {
+        try { fs.unlinkSync(tmpCheck); } catch {}
         const errMsg = (e.stderr || e.message || '').trim();
         const lineMatch = errMsg.match(/:(\d+)$/m);
         const line = lineMatch ? parseInt(lineMatch[1]) : null;
@@ -337,6 +340,11 @@ async function isBotGroupAdmin(sock, chatId) {
 
 // cooldown لـ antiPrivate — يمنع تكرار الرسائل
 const _pvtCooldown = new Map();
+// تنظيف تلقائي كل 10 دقائق لمنع memory leak
+setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of _pvtCooldown) { if (v < now) _pvtCooldown.delete(k); }
+}, 600_000).unref?.();
 
 // ══════════════════════════════════════════════════════════════
 //  protectionHandler — المعالج الرئيسي للحماية
@@ -438,7 +446,7 @@ async function protectionHandler(sock, msg) {
 
         // ── antiInsult ──
         if (prot.antiInsult === 'on') {
-            if (INSULT_WORDS.some(w => new RegExp('\\b'+w+'\\b','i').test(text))) {
+            if (INSULT_WORDS.some(w => text.includes(w))) {
                 try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
                 if (isGroup && !msg.key.fromMe) {
                     const senderRaw = msg.key.participant || '';
@@ -2382,212 +2390,3 @@ ${list}
 
 export default { NovaUltra, execute };
 
-
-
-// --------------------- BEGIN AUTOMATIC PATCH (yt-dlp, ffmpeg, cookies, retries) ---------------------
-// NOTE: This section was appended automatically to improve yt-dlp handling (rate-limit, cookies, ffmpeg checks),
-// add better error hints, and provide a helper to exclude owners/elites from private-blocking.
-// You may move functions into your preferred module structure or call them from existing code.
-//
-// How to integrate quickly (recommended):
-// 1) Replace calls of `getYtdlpBin(...)` with `getYtdlpBinPatched(...)` and `ytdlpDownload(...)` with `ytdlpDownloadPatched(...)`
-//    — or require this module and call exported functions as needed.
-// 2) For anti-private blocking, call `isOwnerOrElite(jid)` before issuing a block action.
-// 3) For "الرئيسية" behavior and single-step back protection, integrate the `handleMainCommand(text, state)` snippet below
-//    into your message listener early in the chain.
-//
-// The functions below are defensive (they use child_process.exec) and return/throw Errors similar to yt-dlp messages.
-
-const child_process = require('child_process');
-const fse = require('fs-extra');
-const path = require('path');
-const os = require('os');
-
-const execAsync = (cmd, opts) => new Promise((resolve, reject) => {
-  child_process.exec(cmd, opts || {}, (err, stdout, stderr) => {
-    if (err) {
-      const e = new Error(stderr || err.message || String(err));
-      e.stderr = stderr;
-      e.stdout = stdout;
-      return reject(e);
-    }
-    resolve({ stdout: stdout||'', stderr: stderr||'' });
-  });
-});
-
-// ---- getYtdlpBinPatched: finds yt-dlp and ensures ffmpeg exists
-async function getYtdlpBinPatched() {
-  if (global._cachedYtdlpBin) return global._cachedYtdlpBin;
-  const candidates = ['yt-dlp', 'yt_dlp', 'yt-dlp.exe', 'python3 -m yt_dlp', 'python -m yt_dlp'];
-  for (const c of candidates) {
-    try {
-      await execAsync(`${c} --version`, { timeout: 5000 });
-      global._cachedYtdlpBin = c;
-      break;
-    } catch (e) {
-      // ignore
-    }
-  }
-  if (!global._cachedYtdlpBin) {
-    throw new Error('yt-dlp غير مثبت — شغّل: pip install -U yt-dlp');
-  }
-  // ffmpeg check
-  try {
-    await execAsync('ffmpeg -version', { timeout: 5000 });
-  } catch (e) {
-    throw new Error('ffmpeg غير مثبت — مطلوب لتحويل/دمج الفيديو. ثبّته (مثال: apt install ffmpeg)');
-  }
-  return global._cachedYtdlpBin;
-}
-
-// ---- ytdlpDownloadPatched: supports cookies, cookies-from-browser, retries on rate-limited responses
-async function ytdlpDownloadPatched(url, opts = {}) {
-  opts = opts || {};
-  const tmpDir = path.join(os.tmpdir(), `dl_${Date.now()}_${Math.random().toString(36).slice(2)}`);
-  fse.ensureDirSync(tmpDir);
-
-  const cleanup = () => {
-    try { fse.removeSync(tmpDir); } catch (e) {}
-  };
-
-  const bin = await getYtdlpBinPatched();
-  const cookieArgs = [];
-  if (opts.cookiesPath) cookieArgs.push(`--cookies "${opts.cookiesPath}"`);
-  else if (global._botConfig && global._botConfig.ytdlpCookiesPath) cookieArgs.push(`--cookies "${global._botConfig.ytdlpCookiesPath}"`);
-  else if (opts.cookiesFromBrowser) cookieArgs.push(`--cookies-from-browser ${opts.cookiesFromBrowser}`);
-  else if (global._botConfig && global._botConfig.ytdlpCookiesFromBrowser) cookieArgs.push(`--cookies-from-browser ${global._botConfig.ytdlpCookiesFromBrowser}`);
-
-  // base args: conservative defaults, increase timeouts for slow hosts
-  const baseArgs = [
-    '--no-warnings',
-    '--socket-timeout', '30',
-    '--retries', '3',
-    '--fragment-retries', '3',
-    '--output', `"${path.join(tmpDir,'media.%(ext)s')}"`
-  ].join(' ');
-
-  // helper to run command and detect rate-limit/login errors
-  const runCmd = async (cmd, timeout = 180000) => {
-    try {
-      const result = await execAsync(cmd, { timeout });
-      return result;
-    } catch (e) {
-      const msg = (e.stderr || e.message || '').toLowerCase();
-      // annotate error for caller
-      if (msg.includes('http error 429') || msg.includes('too many requests') || msg.includes('rate') || msg.includes('rate-limit')) {
-        const err = new Error('RATE_LIMIT');
-        err._original = e;
-        throw err;
-      }
-      if (msg.includes('private') || msg.includes('login required') || msg.includes('authorization required') || msg.includes('sign in')) {
-        const err = new Error('LOGIN_REQUIRED');
-        err._original = e;
-        throw err;
-      }
-      throw e;
-    }
-  };
-
-  // Exponential-backoff retry wrapper for rate limits
-  const retryIfRateLimit = async (fn, tries = 3) => {
-    let lastErr;
-    for (let i = 0; i < tries; i++) {
-      try { return await fn(); }
-      catch (e) {
-        lastErr = e;
-        if (String(e.message) === 'RATE_LIMIT') {
-          // wait exp backoff
-          await new Promise(r => setTimeout(r, 1200 * Math.pow(2, i)));
-          continue;
-        }
-        throw e;
-      }
-    }
-    throw lastErr;
-  };
-
-  try {
-    // decide audio-only or full
-    if (opts.audio) {
-      const cmd = `${bin} ${baseArgs} ${cookieArgs.join(' ')} -x --audio-format mp3 --audio-quality 0 "${url}"`;
-      await retryIfRateLimit(() => runCmd(cmd));
-    } else {
-      // try best formats (keep generic format selection to avoid unsupported format errors)
-      const cmd = `${bin} ${baseArgs} ${cookieArgs.join(' ')} --merge-output-format mp4 "${url}"`;
-      await retryIfRateLimit(() => runCmd(cmd));
-    }
-
-    // pick downloaded file
-    const files = (fse.readdirSync(tmpDir) || []).filter(f => !f.endsWith('.part') && !f.endsWith('.ytdl'));
-    if (!files.length) {
-      cleanup();
-      throw new Error('لم يُحمَّل أي ملف. إذا كان المحتوى خاصاً، جرّب توفير ملف الكوكيز.');
-    }
-    const chosen = files.map(f => ({ f, size: fse.statSync(path.join(tmpDir, f)).size }))
-                        .sort((a,b) => b.size - a.size)[0].f;
-    const filePath = path.join(tmpDir, chosen);
-    return { filePath, ext: path.extname(chosen).slice(1).toLowerCase(), cleanup };
-  } catch (e) {
-    cleanup();
-    // produce friendly errors for UI
-    if (String(e.message) === 'LOGIN_REQUIRED') {
-      throw new Error('المحتوى خاص أو يتطلب تسجيل دخول. جرب توفير ملف كوكيز (--cookies) أو استخدم --cookies-from-browser.');
-    }
-    if (String(e.message) === 'RATE_LIMIT' || (e && e._original && (e._original.stderr || '').toLowerCase().includes('429'))) {
-      throw new Error('معدل الطلبات مُرتفع (rate-limit). حاول لاحقاً أو جرّب استخدام كوكيز/جلسة مسجّلة.');
-    }
-    // pass through other errors (trimmed)
-    const msg = (e && (e.stderr || e.message) || String(e || '')).toString();
-    const preview = msg.length > 400 ? msg.slice(0,400) + '...' : msg;
-    throw new Error(preview);
-  }
-}
-
-// ---- isOwnerOrElite helper: use before blocking users in private
-function isOwnerOrElite(jid) {
-  // expects global._botConfig.owners = array of jids or numbers (e.g. ['12345@s.whatsapp.net'])
-  // and global.getElites to be a function that returns array of jids (optional)
-  try {
-    const owners = (global._botConfig && global._botConfig.owners) || [];
-    const elites = (typeof global.getElites === 'function') ? (global.getElites() || []) : (global._elites || []);
-    if (!jid) return false;
-    const norm = jid.toString();
-    if (owners.includes(norm)) return true;
-    if (elites.includes(norm)) return true;
-    return false;
-  } catch (e) {
-    return false;
-  }
-}
-
-// ---- small helper for message listeners to centralize 'الرئيسية' and debounce 'رجوع'
-function handleMainCommand(text, state) {
-  // state is optional object where you can keep a _lastBack timestamp
-  state = state || {};
-  if (!text) return null;
-  const t = text.trim();
-  if (t === 'الرئيسية') {
-    return { action: 'GO_MAIN' };
-  }
-  if (t === 'رجوع') {
-    const now = Date.now();
-    const last = state._lastBack || 0;
-    if (now - last < 1200) return { action: 'IGNORE' };
-    state._lastBack = now;
-    return { action: 'BACK' };
-  }
-  return null;
-}
-
-// Export for potential requiring
-try {
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports.getYtdlpBinPatched = getYtdlpBinPatched;
-    module.exports.ytdlpDownloadPatched = ytdlpDownloadPatched;
-    module.exports.isOwnerOrElite = isOwnerOrElite;
-    module.exports.handleMainCommand = handleMainCommand;
-  }
-} catch (e) {
-  // ignore
-}
-// --------------------- END PATCH ---------------------
