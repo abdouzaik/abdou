@@ -200,15 +200,20 @@ async function protectionHandler(sock, msg) {
         }
 
         if (prot.antiViewOnce === 'on') {
-            const vo = msg.message?.viewOnceMessage || msg.message?.viewOnceMessageV2?.message;
-            if (vo) {
-                const ownerNum = (global._botConfig?.owner || '').toString().replace(/\D/g,'');
-                const ownerJid = ownerNum + '@s.whatsapp.net';
-                const inner    = vo.imageMessage || vo.videoMessage || vo.audioMessage;
+            // البحث عن viewOnceMessage سواء في الجذر أو داخل extendedTextMessage
+            let vo = msg.message?.viewOnceMessage || msg.message?.viewOnceMessageV2;
+            if (!vo && msg.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
+                const quoted = msg.message.extendedTextMessage.contextInfo.quotedMessage;
+                vo = quoted.viewOnceMessage || quoted.viewOnceMessageV2;
+            }
+            if (vo?.message) {
+                const inner = vo.message.imageMessage || vo.message.videoMessage || vo.message.audioMessage;
                 if (inner) {
-                    const buffer = await downloadMediaMessage({ message: vo }, 'buffer', {}).catch(() => null);
+                    const ownerNum = (global._botConfig?.owner || '').toString().replace(/\D/g,'');
+                    const ownerJid = ownerNum + '@s.whatsapp.net';
+                    const buffer = await downloadMediaMessage(vo, 'buffer', {}).catch(() => null);
                     if (buffer) {
-                        const type = vo.imageMessage ? 'image' : vo.videoMessage ? 'video' : 'audio';
+                        const type = vo.message.imageMessage ? 'image' : vo.message.videoMessage ? 'video' : 'audio';
                         await sock.sendMessage(ownerJid, { [type]: buffer, caption: `👁️ view-once من: ${chatId}` });
                     }
                 }
@@ -240,9 +245,35 @@ async function statsAutoHandler(sock, msg) {
 }
 statsAutoHandler._src = 'stats_system';
 
+// إضافة معالج antiDelete
+async function antiDeleteHandler(sock, deletedMessages) {
+    try {
+        const prot = readProt();
+        if (prot.antiDelete !== 'on') return;
+
+        for (const item of deletedMessages) {
+            for (const key of item.keys) {
+                const chatId = key.remoteJid;
+                const sender = key.participant || key.remoteJid;
+                const messageId = key.id;
+
+                // إرسال إشعار للمجموعة (يمكن تخصيصه)
+                await sock.sendMessage(chatId, {
+                    text: `🗑️ *تم حذف رسالة*\nالمرسل: @${sender.split('@')[0]}\nمعرف الرسالة: ${messageId}`,
+                    mentions: [sender]
+                }).catch(() => {});
+            }
+        }
+    } catch {}
+}
+antiDeleteHandler._src = 'antiDelete_system';
+
+// دمج جميع المعالجات في global.featureHandlers
 if (!global.featureHandlers) global.featureHandlers = [];
-global.featureHandlers = global.featureHandlers.filter(h => !['protection_system','stats_system'].includes(h._src));
-global.featureHandlers.push(protectionHandler, statsAutoHandler);
+global.featureHandlers = global.featureHandlers.filter(h => 
+    !['protection_system','stats_system','antiDelete_system'].includes(h._src)
+);
+global.featureHandlers.push(protectionHandler, statsAutoHandler, antiDeleteHandler);
 
 // ══════════════════════════════════════════════════════════════
 const MAIN_MENU =
@@ -520,7 +551,7 @@ export async function execute({ sock, msg }) {
         }
 
         // ════════════════════════════════════════════════════
-        // 🤖 SUBS — البوتات الفرعية
+        // 🤖 SUBS — البوتات الفرعية (مصحح)
         // ════════════════════════════════════════════════════
         if (state === 'SUBS') {
             if (text === 'رجوع') { await update(MAIN_MENU); state = 'MAIN'; return; }
@@ -631,9 +662,16 @@ export async function execute({ sock, msg }) {
                 tempSock.ev.on('creds.update', saveCreds);
 
                 let codeReceived = false;
+                let pairingCompleted = false;
+                const timeoutId = setTimeout(() => {
+                    if (!pairingCompleted) {
+                        tempSock.end();
+                        update('❌ *انتهى وقت الانتظار (أكثر من دقيقة)*\n\n🔙 *رجوع*');
+                        state = 'SUBS';
+                    }
+                }, 70000);
 
                 tempSock.ev.on('connection.update', async ({ connection, qr, lastDisconnect }) => {
-                    // تصحيح الخطأ المنطقي هنا!
                     if (qr && !codeReceived) {
                         try {
                             let code = await tempSock.requestPairingCode(phone);
@@ -652,47 +690,49 @@ export async function execute({ sock, msg }) {
 ⏱️ الكود صالح لمدة *60 ثانية*
 🔙 *رجوع*`
                             );
-                            setTimeout(() => { if (!tempSock.user) try { tempSock.end(); } catch {} }, 65_000);
                         } catch (e) {
                             await update(`❌ فشل توليد الكود: ${e?.message}\n\n🔙 *رجوع*`);
-                            try { tempSock.end(); } catch {}
+                            clearTimeout(timeoutId);
+                            tempSock.end();
+                            state = 'SUBS';
                         }
                     }
 
-                    if (connection === 'open') {
+                    if (connection === 'open' && !pairingCompleted) {
+                        pairingCompleted = true;
+                        clearTimeout(timeoutId);
                         const jid = tempSock.user?.id?.split(':')[0] || phone;
-                        try { tempSock.end(); } catch {}
+                        tempSock.end();
+
                         process.send?.({ type: 'spawn_sub', name: tmp.subName });
                         react(sock, m, '✅');
                         await update(`🎉 *تم ربط [ ${tmp.subName} ] بنجاح!*\n\n📱 الرقم: +${jid}\n🤖 البوت يعمل الآن.\n\n🔙 *رجوع*`);
-                        await sleep(2000); await showSubMenu(); state = 'SUBS';
+                        await sleep(2000);
+                        await showSubMenu();
+                        state = 'SUBS';
                     }
 
-                    if (connection === 'close') {
-                        const code = lastDisconnect?.error?.output?.statusCode;
-                        if (code === 401 || code === 403) {
-                            try { tempSock.end(); } catch {}
-                            if (!codeReceived) await update('❌ انتهت صلاحية الكود.\n\n🔙 *رجوع*');
+                    if (connection === 'close' && !pairingCompleted) {
+                        const statusCode = lastDisconnect?.error?.output?.statusCode;
+                        if (statusCode === 401 || statusCode === 403) {
+                            await update('❌ *انتهت صلاحية الكود أو تم رفضه*\n\n🔙 *رجوع*');
+                        } else {
+                            await update('❌ *انقطع الاتصال، حاول مجدداً*\n\n🔙 *رجوع*');
                         }
+                        clearTimeout(timeoutId);
+                        tempSock.end();
+                        state = 'SUBS';
                     }
                 });
             } catch (e) {
                 await update(`❌ خطأ تقني: ${e?.message}\n\n🔙 *رجوع*`);
-            }
-
-            state = 'SUBS_WAITING_PAIR';
-            return;
-        }
-
-        if (state === 'SUBS_WAITING_PAIR') {
-            if (text === 'رجوع') {
-                accountUtils.deleteAccount(tmp.subName);
-                writeSubs(readSubs().filter(s => s !== tmp.subName));
-                await showSubMenu(); state = 'SUBS';
+                state = 'SUBS';
             }
             return;
         }
 
+        // بقية الأقسام (STATS, PROT, CMDTOOLS, ADMIN) تبقى كما هي (لم يتم تعديلها)
+        // ... (لن أكررها هنا للاختصار، لكنها موجودة في الملف الأصلي)
         // ════════════════════════════════════════════════════
         // 📊 STATS
         // ════════════════════════════════════════════════════
@@ -749,7 +789,7 @@ export async function execute({ sock, msg }) {
                     if (global._handlers)     global._handlers     = {};
                     if (global.featureHandlers) {
                         global.featureHandlers = global.featureHandlers.filter(h =>
-                            ['protection_system','stats_system'].includes(h._src));
+                            ['protection_system','stats_system','antiDelete_system'].includes(h._src));
                     }
                     await loadPlugins().catch(()=>{});
                     react(sock, m, '✅');
@@ -1115,7 +1155,7 @@ export async function execute({ sock, msg }) {
             return;
         }
 
-    }; // <--- هنا يتم إغلاق المستمع بشكل صحيح
+    }; // نهاية listener
 
     // ════════════════════════════════════════════════════════
     // دوال عرض القوائم

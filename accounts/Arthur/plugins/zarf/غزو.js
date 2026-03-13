@@ -65,7 +65,8 @@ export async function execute({ sock, msg, args }) {
     const chatId = msg.key.remoteJid;
     const sender = msg.key.participant || chatId;
     const botJid = decodeRaw(sock.user.id);
-    const ownerJid = decodeRaw(global._botConfig?.owner + '@s.whatsapp.net'); // جلب رقم المطور
+    // تصحيح: استخدام decodeRaw مباشرة على قيمة owner دون إضافة @s.whatsapp.net يدوياً
+    const ownerJid = decodeRaw(global._botConfig?.owner);
     const prefix = "/"; // يمكنك استبداله بـ global.prefix
 
     // 1. [ قسم التحكم والإيقاف ] ────────────────────────────────
@@ -111,7 +112,7 @@ export async function execute({ sock, msg, args }) {
 
     if (players.length < 2) {
         return sock.sendMessage(chatId, { 
-            text: `❌ *العدد غير كافي!*\n_اللعبة تحتاج لشخصين عاديين على الأقل (غير البوت والنخبة والمطور) لبدء التحدي._` 
+            text: `❌ *العدد غير كافي!*\n_اللعبة تحتاج لشخصين عاديين على الأقل._` 
         });
     }
 
@@ -130,7 +131,7 @@ export async function execute({ sock, msg, args }) {
     try {
         // ─── [ إعلان البداية مع المنشن الجماعي ] ───
         await sock.sendMessage(chatId, {
-            text: `🛸 *--- إنـذار بـغـزو فـضـائـي ---*\n\n_تم رصد مركبات تقترب من المجموعه..._\n_القوانين:_ \`أسرع من يكتب الكود ينجو، والأبطأ يطرد!\`\n_ملاحظة:_ \`المطور والنخبة في أمان، البقية سيتم تصفيتهم عشوائياً واحداً تلو الآخر!\`\n\n📢 *الـنـداء الـعـام:* ${mentions(allMembers)}\n\n⏳ _سيتم إطلاق أول كود بعد_ *15 ثانية*`,
+            text: `🛸 *--- إنـذار بـغـزو فـضـائـي ---*\n\n_تم رصد مركبات تقترب من المجموعه..._\n_القوانين:_ \`أسرع من يكتب الكود ينجو، والأبطأ يطرد!\`\n_ملاحظة:_ ${mentions(allMembers)}\n\n⏳ _سيتم إطلاق أول كود بعد_ *15 ثانية*`,
             mentions: allMembers
         });
 
@@ -145,7 +146,7 @@ export async function execute({ sock, msg, args }) {
             ];
 
             await sock.sendMessage(chatId, {
-                text: `👾 *الـجـولـة [ ${session.round} ]*\n_الناجون المتبقون:_ *${players.length}*\n\n_قم بكتابة أحد الأكواد التالية لفك التشفير:_\n\n\`${codes[0]}\`  -  \`${codes[1]}\`\n\n⏱️ _لديك_ *12* _ثانية فقط!_`
+                text: `👾 *الـجـولـة [ ${session.round} ]*\n_الناجون المتبقون:_ *${players.length}*\n\n_قم بكتابة أحد الأكواد التالية لفك التشفير:_\n\n\`${codes[0]}\`  -  \`${codes[1]}\`\n\n⏱️ _لديك_ *10* _ثانية فقط!_`
             });
 
             const roundStart = Date.now();
@@ -168,7 +169,7 @@ export async function execute({ sock, msg, args }) {
 
             // تفعيل المستمع
             sock.ev.on("messages.upsert", roundListener);
-            await wait(12000); // وقت انتظار الاستجابة
+            await wait(10000); // وقت انتظار الاستجابة
             sock.ev.off("messages.upsert", roundListener);
 
             if (session.stop) break;
