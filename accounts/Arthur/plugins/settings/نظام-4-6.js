@@ -1744,7 +1744,7 @@ ${topUsers}
         const bf = grpFile('badwords', chatId); const words = readJSON(bf, []);
         const list = words.length ? words.map((w,i)=>`${i+1}. ${w}`).join('\n') : 'لا يوجد كلمات';
         await update(
-`✧━── ❝ 𝐁𝐀𝐃𝐖𝐎𝐑𝐃𝐒 ❞ ──━✧
+`✧━── ❝ 𝐁𝐀𝐃𝐖𝐎𝐑𝐃𝐒. ❞ ──━✧
 
 *الكلمات الممنوعة 🚫:*
 ${list}
