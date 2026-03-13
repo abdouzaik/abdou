@@ -78,8 +78,8 @@ async function execute({ sock, msg, args, sender }) {
         try {
             const meta    = await sock.groupMetadata(chatId);
             const botNum  = sock.user.id.split(':')[0];
-            const admins  = meta.participants.filter(p => p.admin).map(p => p.id.split(':')[0].split('@')[0]);
-            const sNum    = (sender?.pn || msg.key.participant || '').split('@')[0].split(':')[0].replace(/\D/g,'');
+            const admins  = meta.participants.filter(p => p.admin).map(p => normJid(p.id).split('@')[0]);
+            const sNum    = normJid(sender?.pn || msg.key.participant || '').split('@')[0];
             if (!msg.key.fromMe && !admins.includes(sNum))
                 return sock.sendMessage(chatId, { text: '❌ فقط المشرفين يقدرون يوقفون اللعبة.' }, { quoted: msg });
         } catch {}
@@ -96,18 +96,21 @@ async function execute({ sock, msg, args, sender }) {
     try { meta = await sock.groupMetadata(chatId); }
     catch { return sock.sendMessage(chatId, { text: '❌ تعذر جلب بيانات المجموعة.' }, { quoted: msg }); }
 
-    const botId      = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-    const botIsAdmin = meta.participants.some(p =>
-        (p.id === botId || p.id.startsWith(sock.user.id.split(':')[0])) && p.admin
-    );
+    // تطبيع الـ JID — يحذف رقم الجهاز (:XX) للمقارنة الصحيحة
+    const normJid  = jid => jid?.replace(/:[0-9]+@/, '@') || '';
+    const botNum   = normJid(sock.user.id).split('@')[0];
+    const botId    = botNum + '@s.whatsapp.net';
+
+    const botEntry = meta.participants.find(p => normJid(p.id).split('@')[0] === botNum);
+    const botIsAdmin = botEntry?.admin === 'admin' || botEntry?.admin === 'superadmin';
 
     if (!botIsAdmin)
         return sock.sendMessage(chatId, { text: '❌ البوت يحتاج صلاحية مشرف لتشغيل اللعبة.' }, { quoted: msg });
 
-    // ── تجهيز اللاعبين (بدون المشرفين والبوت) ─────────────────
+    // ── تجهيز اللاعبين — بدون البوت فقط (المشرفين يلعبون) ─────
     let activePlayers = meta.participants
-        .filter(p => !p.admin && p.id !== botId)
-        .map(p => p.id);
+        .filter(p => normJid(p.id).split('@')[0] !== botNum)
+        .map(p => normJid(p.id));
 
     if (activePlayers.length < 2)
         return sock.sendMessage(chatId, { text: '❌ يحتاج على الأقل لاعبَين لبدء اللعبة.' }, { quoted: msg });
@@ -174,8 +177,9 @@ ${playerMentions(activePlayers)}
             const roundListener = ({ messages }) => {
                 const m = messages?.[0];
                 if (!m?.message || m.key.remoteJid !== chatId || m.key.fromMe) return;
+                const mSender = normJid(m.key.participant || m.key.remoteJid);
 
-                const jid  = m.key.participant || m.key.remoteJid;
+                const jid  = normJid(m.key.participant || m.key.remoteJid);
                 const text = (m.message.conversation || m.message.extendedTextMessage?.text || '').trim();
 
                 if (codes.includes(text) && activePlayers.includes(jid) && !responded.has(jid)) {
@@ -214,7 +218,7 @@ ${playerMentions(activePlayers)}
             }
 
             // ── تنفيذ الاختطاف ───────────────────────────────
-            const toKick = kidnapped.filter(p => p !== botId);
+            const toKick = kidnapped.filter(p => normJid(p).split('@')[0] !== botNum);
 
             if (toKick.length > 0) {
                 try {
