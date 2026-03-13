@@ -168,14 +168,16 @@ async function protectionHandler(sock, msg) {
             }
         }
 
-        // ── أنتي لينكات (في القروبات فقط) ────────────────────
-        if (prot.antiLink === 'on' && isGroup && LINK_REGEX.test(text)) {
+        // ── أنتي لينكات (في القروبات فقط، بدون رسائل البوت) ─
+        if (prot.antiLink === 'on' && isGroup && !msg.key.fromMe && LINK_REGEX.test(text)) {
             const meta    = await sock.groupMetadata(chatId).catch(() => null);
             if (meta) {
                 const botNum  = sock.user.id.split(':')[0];
-                const admins  = meta.participants.filter(p => p.admin).map(p => p.id.split(':')[0].split('@')[0]);
-                const sender  = (msg.key.participant || '').split(':')[0].split('@')[0];
-                if (!admins.includes(sender)) {
+                const admins  = meta.participants.filter(p => p.admin)
+                                   .map(p => p.id.split(':')[0].split('@')[0]);
+                const senderNum = (msg.key.participant || '').split(':')[0].split('@')[0];
+                // تجاهل المشرفين والبوت
+                if (!admins.includes(senderNum) && senderNum !== botNum) {
                     try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
                 }
             }
@@ -301,13 +303,40 @@ async function execute({ sock, msg }) {
 
     // ── React map ───────────────────────────────────────────
     const REACTS = {
-        'رجوع':'🔙','تشغيل':'✅','اطفاء':'⛔','نعم':'👍','لا':'❌',
-        'حذف':'🗑️','اضافة':'➕','عرض':'📋','مسح الكل':'🗑️',
-        'تنصيب':'🤖','نخبة':'👑','بلاجنز':'🧩','إحصاءات':'📊',
-        'حماية':'🛡️','أوامر':'🔧','بحث':'🔍','تفاصيل':'🔎',
-        'حفظ':'💾','تغيير':'✏️','إصلاح':'🔨','نظام':'⚙️','إدارة':'🛠️',
-        'طرد':'🚪','حظر':'🔨','كتم':'🔇','تثبيت':'📌','رابط':'🔗','قوانين':'📜',
-        'ترحيب':'👋','الاوامر':'📋','معلومات':'ℹ️','اذاعة':'📢','تحديث':'🔄',
+        // تنقل
+        'رجوع':'🔙','نعم':'👍','لا':'❌','تأكيد':'✅','الغاء':'↩️',
+        // قوائم رئيسية
+        'نظام':'⚙️','نخبة':'👑','بلاجنز':'🧩','تنصيب':'🤖',
+        'إحصاءات':'📊','حماية':'🛡️','أوامر':'🔧','إدارة':'🛠️',
+        // نخبة
+        'اضافة':'➕','حذف':'🗑️','عرض':'📋','مسح الكل':'🗑️',
+        // بلاجنز
+        'بحث':'🔍','قفل':'🔒','فتح':'🔓','نخبة':'👑','عام':'🌐',
+        'مجموعات':'👥','خاص':'💬','للجميع':'🌍','شغل الكل':'🔓','طفي الكل':'🔒',
+        // أدوات
+        'تغيير اسم':'✏️','مصلح AI':'🤖','مسح كاش':'🗑️','تراجع':'↩️',
+        // تنصيب
+        'جديد':'➕','حالة':'📊',
+        // إحصاءات
+        'مسح':'🗑️',
+        // حماية
+        'انتي كراش':'💥','انتي لينكات':'🔗','انتي حذف':'🗑️','انتي سب':'🤬','view once':'👁️',
+        // إدارة أعضاء
+        'رفع مشرف':'👑','تنزيل مشرف':'⬇️','المشرفين':'👥',
+        'طرد':'🚪','حظر':'🔨','الغاء حظر':'✅',
+        'كتم':'🔇','الغاء كتم':'🔊',
+        'تقييد':'🔒','رفع تقييد':'🔓',
+        // إدارة مجموعة
+        'تثبيت':'📌','الغاء التثبيت':'📌','رابط':'🔗',
+        'وضع اسم':'✏️','وضع وصف':'✏️','وضع صورة':'🖼️',
+        'قفل المحادثة':'🔒','فتح المحادثة':'🔓','مسح':'🗑️',
+        // محتوى
+        'وضع ترحيب':'👋','ترحيب':'👋','وضع قوانين':'📜','قوانين':'📜','كلمات ممنوعة':'🚫',
+        // حماية مجموعة
+        'قفل الروابط':'🔗','قفل الصور':'🖼️','قفل الفيديو':'🎥','قفل البوتات':'🤖','نظام الحماية':'🛡️',
+        // بوت
+        'الاوامر':'📋','بحث اوامر':'🔍','معلومات':'ℹ️','اذاعة':'📢','تحديث':'🔄',
+        'حفظ':'💾','تغيير':'✏️','إصلاح':'🔨',
     };
 
     const listener = async ({ messages }) => {
@@ -596,10 +625,10 @@ async function execute({ sock, msg }) {
             if (text === 'رجوع') { await update(MAIN_MENU); state = 'MAIN'; return; }
 
             const protMap = {
-                'أنتي كراش':   'antiCrash',
-                'أنتي لينكات': 'antiLink',
-                'أنتي حذف':    'antiDelete',
-                'أنتي سب':     'antiInsult',
+                'انتي كراش':   'antiCrash',
+                'انتي لينكات': 'antiLink',
+                'انتي حذف':    'antiDelete',
+                'انتي سب':     'antiInsult',
                 'view once':    'antiViewOnce',
             };
 
@@ -629,6 +658,28 @@ async function execute({ sock, msg }) {
             if (text === 'مصلح AI') {
                 await update('🔨 `أرسل اسم الأمر + الخطأ البرمجي بهذا الشكل:`\n`اسم الامر\nنص الخطأ`\n\n🔙 *رجوع*');
                 state = 'AI_FIX_WAIT'; return;
+            }
+
+            if (text === 'مسح كاش') {
+                react(sock, m, '⏳');
+                try {
+                    // مسح كاش البلاجنز المحملة
+                    if (global._pluginsCache) global._pluginsCache = {};
+                    if (global._handlers)     global._handlers     = {};
+                    if (global.featureHandlers) {
+                        global.featureHandlers = global.featureHandlers.filter(h =>
+                            ['protection_system','stats_system'].includes(h._src)
+                        );
+                    }
+                    // إعادة تحميل الأوامر بعد المسح
+                    await loadPlugins().catch(()=>{});
+                    react(sock, m, '✅');
+                    await update('✅ `تم مسح الكاش وإعادة تحميل الأوامر بنجاح.`');
+                } catch(e) {
+                    react(sock, m, '❌');
+                    await update(`❌ فشل مسح الكاش: ${e?.message}`);
+                }
+                await sleep(1000); await showCmdTools(); return;
             }
             return;
         }
@@ -693,8 +744,6 @@ async function execute({ sock, msg }) {
             if (text === 'رجوع') { await showCmdTools(); state = 'CMDTOOLS'; return; }
             return;
         }
-    };
-
 
         // ════════════════════════════════════════════════════
         // 🛠️ ADMIN — إدارة المجموعات
@@ -975,7 +1024,7 @@ async function execute({ sock, msg }) {
             return;
         }
 
-
+    }; // end listener
 
     async function showAdminMenu() {
         await update(
@@ -1155,16 +1204,16 @@ ${topUsers}
         await update(
 `*نظام الحماية 🛡️*
 
-- *أنتي كراش* ${s('antiCrash')}
+- *انتي كراش* ${s('antiCrash')}
 \`💥 لحماية البوت من رسائل التجميد.\`
 
-- *أنتي لينكات* ${s('antiLink')}
+- *انتي لينكات* ${s('antiLink')}
 \`🔗 لمنع إرسال الروابط بالمجموعات.\`
 
-- *أنتي حذف* ${s('antiDelete')}
+- *انتي حذف* ${s('antiDelete')}
 \`🗑️ لإظهار الرسائل التي يحذفها الأعضاء.\`
 
-- *أنتي سب* ${s('antiInsult')}
+- *انتي سب* ${s('antiInsult')}
 \`🤬 لحذف الكلمات البذيئة تلقائياً.\`
 
 - *view once* ${s('antiViewOnce')}
@@ -1184,6 +1233,9 @@ ${topUsers}
 
 - *مصلح AI*
 \`🤖 يحلل الأخطاء البرمجية ويصلح أكواد الأوامر تلقائياً.\`
+
+- *مسح كاش*
+\`🗑️ لمسح ذاكرة التخزين المؤقت وإعادة تحميل الأوامر.\`
 
 🔙 *رجوع*`
         );
