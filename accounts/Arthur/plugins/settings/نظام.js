@@ -438,7 +438,7 @@ async function protectionHandler(sock, msg) {
 
         // ── antiInsult ──
         if (prot.antiInsult === 'on') {
-            if (INSULT_WORDS.some(w => text.toLowerCase().includes(w))) {
+            if (INSULT_WORDS.some(w => new RegExp('\\b'+w+'\\b','i').test(text))) {
                 try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
                 if (isGroup && !msg.key.fromMe) {
                     const senderRaw = msg.key.participant || '';
