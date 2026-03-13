@@ -61,9 +61,14 @@ const reactInput = (sock, m, text) => {
     if (key) return sock.sendMessage(m.key.remoteJid, { react: { text: INPUT_REACT_MAP[key], key: m.key } }).catch(() => {});
 };
 
-// normalizeJid — مطابق تماماً لـ messages.js
-const normalizeJid = jid =>
-    jid ? jid.split('@')[0].split(':')[0].replace(/\D/g, '') : '';
+// normalizeJid — يستخرج الجزء قبل @ وقبل : فقط
+// إذا كان رقم هاتف نقيه بدون أحرف — وإلا نُعيده كما هو (LID)
+const normalizeJid = jid => {
+    if (!jid) return '';
+    const part = jid.split('@')[0].split(':')[0];
+    const digits = part.replace(/\D/g, '');
+    return digits || part;
+};
 
 const getBotJid = sock =>
     (jidDecode(sock.user?.id)?.user ||
@@ -122,6 +127,10 @@ const writeStats = d  => writeJSON(STATS_FILE, d);
 const grpFile = (prefix, chatId) =>
     path.join(DATA_DIR, prefix + '_' + chatId.replace(/[^\w]/g, '_') + '.json');
 
+// ── cache لـ getPluginInfo — بدل قراءة disk عند كل رسالة ──
+const _pluginInfoCache = new Map(); // key: filePath, value: { mtime, info }
+
+
 // ══════════════════════════════════════════════════════════════
 //  plugin utils
 // ══════════════════════════════════════════════════════════════
@@ -137,23 +146,32 @@ function getAllPluginFiles(dir = PLUGINS_DIR, list = []) {
 }
 
 function getPluginInfo(filePath) {
-    const code = fs.readFileSync(filePath, 'utf8');
-    let cmd;
-    const arr = code.match(/command:\s*\[([^\]]+)\]/);
-    if (arr) {
-        const cmds = arr[1].match(/['"`]([^'"`]+)['"`]/g);
-        cmd = cmds ? cmds[0].replace(/['"`]/g, '') : path.basename(filePath, '.js');
-    } else {
-        cmd = code.match(/command:\s*['"`]([^'"`]+)['"`]/)?.[1] || path.basename(filePath, '.js');
+    try {
+        const mtime = fs.statSync(filePath).mtimeMs;
+        const cached = _pluginInfoCache.get(filePath);
+        if (cached && cached.mtime === mtime) return cached.info;
+        const code = fs.readFileSync(filePath, 'utf8');
+        let cmd;
+        const arr = code.match(/command:\s*\[([^\]]+)\]/);
+        if (arr) {
+            const cmds = arr[1].match(/['"`]([^'"`]+)['"`]/g);
+            cmd = cmds ? cmds[0].replace(/['"`]/g, '') : path.basename(filePath, '.js');
+        } else {
+            cmd = code.match(/command:\s*['"`]([^'"`]+)['"`]/)?.[1] || path.basename(filePath, '.js');
+        }
+        const info = {
+            cmd,
+            elite: code.match(/elite:\s*['"`](on|off)['"`]/i)?.[1]  || 'off',
+            lock:  code.match(/lock:\s*['"`](on|off)['"`]/i)?.[1]   || 'off',
+            group: (code.match(/group:\s*(true|false)/i)?.[1]        || 'false') === 'true',
+            prv:   (code.match(/prv:\s*(true|false)/i)?.[1]          || 'false') === 'true',
+            filePath,
+        };
+        _pluginInfoCache.set(filePath, { mtime, info });
+        return info;
+    } catch {
+        return { cmd: path.basename(filePath, '.js'), elite:'off', lock:'off', group:false, prv:false, filePath };
     }
-    return {
-        cmd,
-        elite: code.match(/elite:\s*['"`](on|off)['"`]/i)?.[1]  || 'off',
-        lock:  code.match(/lock:\s*['"`](on|off)['"`]/i)?.[1]   || 'off',
-        group: (code.match(/group:\s*(true|false)/i)?.[1]        || 'false') === 'true',
-        prv:   (code.match(/prv:\s*(true|false)/i)?.[1]          || 'false') === 'true',
-        filePath,
-    };
 }
 
 function updatePluginField(filePath, key, value) {
@@ -361,6 +379,49 @@ async function isBotGroupAdmin(sock, chatId) {
 }
 
 // cooldown section removed (antiPrivate disabled)
+
+// ── cooldown لـ antiPrivate ──
+const _pvtCooldown = new Map();
+
+// ── Rate Limiter — الحد: 20 رسالة/دقيقة لكل مستخدم ──
+const _rateMap = new Map();
+function isRateLimited(jid, max = 20) {
+    const now = Date.now();
+    const prev = _rateMap.get(jid) || [];
+    const recent = prev.filter(t => now - t < 60_000);
+    recent.push(now);
+    _rateMap.set(jid, recent);
+    return recent.length > max;
+}
+
+// ── تنظيف دوري كل دقيقة ──
+setInterval(() => {
+    const now = Date.now();
+    // تنظيف _rateMap
+    for (const [k, v] of _rateMap) {
+        const fresh = v.filter(t => now - t < 60_000);
+        if (!fresh.length) _rateMap.delete(k);
+        else _rateMap.set(k, fresh);
+    }
+    // تنظيف _pvtCooldown
+    for (const [k, v] of _pvtCooldown) {
+        if (v <= now) _pvtCooldown.delete(k);
+    }
+    // تنظيف activeSessions — حذف جلسات أكثر من 5 دقائق بدون نشاط
+    for (const [id, s] of activeSessions) {
+        if (s.lastActivity && now - s.lastActivity > 300_000) {
+            try { s.cleanupFn?.(); } catch {}
+            activeSessions.delete(id);
+        }
+    }
+    // حد أقصى للجلسات 100
+    if (activeSessions.size > 100) {
+        // احذف أقدم جلسة
+        const oldest = [...activeSessions.entries()].sort((a,b) => (a[1].lastActivity||0) - (b[1].lastActivity||0))[0];
+        if (oldest) { try { oldest[1].cleanupFn?.(); } catch {} activeSessions.delete(oldest[0]); }
+    }
+}, 60_000);
+
 
 // ══════════════════════════════════════════════════════════════
 //  protectionHandler — المعالج الرئيسي للحماية
@@ -663,6 +724,11 @@ const SLASH_HELP =
 
 *🔒 قفل المحتوى (toggle):*
 \`/قفل روابط\` \`/قفل صور\` \`/قفل فيديو\` \`/قفل بوتات\`
+
+*🤖 البوت:*
+\`/اسم بوت [اسم]\` \`/وصف بوت [نص]\`
+\`/صورة بوت\` (رد على صورة)
+\`/مجموعاتي\` \`/خاص\`
 
 *🔧 أدوات:*
 \`/تحميل [رابط]\` \`/تحميل صوت [رابط]\`
@@ -1217,6 +1283,103 @@ async function slashCommandHandler(sock, msg) {
             return;
         }
 
+        // ══════════════════════════════════════════════════
+        // أوامر البوت — تغيير الاسم والصورة والوصف
+        // ══════════════════════════════════════════════════
+
+        // /اسم بوت [الاسم الجديد]
+        if (twoWord === 'اسم بوت') {
+            if (!rest2) return reply('📖 الاستخدام: /اسم بوت [الاسم الجديد]');
+            react(sock, msg, '⏳');
+            try {
+                await sock.updateProfileName(rest2.trim());
+                react(sock, msg, '✅');
+                await reply('✅ تم تغيير اسم البوت إلى: *' + rest2.trim() + '*');
+            } catch (e) { react(sock, msg, '❌'); await reply('❌ ' + e?.message); }
+            return;
+        }
+
+        // /وصف بوت [النص]
+        if (twoWord === 'وصف بوت') {
+            if (!rest2) return reply('📖 الاستخدام: /وصف بوت [النص]');
+            react(sock, msg, '⏳');
+            try {
+                await sock.updateProfileStatus(rest2.trim());
+                react(sock, msg, '✅');
+                await reply('✅ تم تغيير وصف البوت.');
+            } catch (e) { react(sock, msg, '❌'); await reply('❌ ' + e?.message); }
+            return;
+        }
+
+        // /صورة بوت — رد على صورة
+        if (twoWord === 'صورة بوت') {
+            const ctx2   = msg.message?.extendedTextMessage?.contextInfo;
+            const imgMsg = msg.message?.imageMessage || ctx2?.quotedMessage?.imageMessage;
+            if (!imgMsg) return reply('↩️ رد على صورة مع كتابة /صورة بوت');
+            react(sock, msg, '⏳');
+            try {
+                const { downloadMediaMessage } = await import('@whiskeysockets/baileys');
+                const target2 = msg.message?.imageMessage
+                    ? msg
+                    : { message: ctx2.quotedMessage, key: { ...msg.key, id: ctx2.stanzaId, participant: ctx2.participant } };
+                const buf = await downloadMediaMessage(target2, 'buffer', {});
+                const botJid = getBotJid(sock);
+                await sock.updateProfilePicture(botJid, buf);
+                react(sock, msg, '✅');
+                await reply('✅ تم تغيير صورة البوت.');
+            } catch (e) { react(sock, msg, '❌'); await reply('❌ ' + e?.message); }
+            return;
+        }
+
+        // /مجموعاتي — إحصاءات المجموعات
+        if (cmd === 'مجموعاتي') {
+            react(sock, msg, '⏳');
+            try {
+                const allGroups = await sock.groupFetchAllParticipating();
+                const groups = Object.values(allGroups);
+                if (!groups.length) return reply('📭 البوت ليس في أي مجموعة حالياً.');
+                groups.sort((a, b) => (b.participants?.length || 0) - (a.participants?.length || 0));
+                const totalMembers = groups.reduce((s, g) => s + (g.participants?.length || 0), 0);
+                const top5 = groups.slice(0, 5).map((g, i) =>
+                    (i+1) + '. *' + (g.subject || '—') + '* — ' + (g.participants?.length || 0) + ' عضو'
+                ).join('\n');
+                await reply(
+                    '✧━── ❝ 𝐆𝐑𝐎𝐔𝐏𝐒 ❞ ──━✧\n\n' +
+                    '📊 المجموعات: *' + groups.length + '*\n' +
+                    '👥 إجمالي الأعضاء: *' + totalMembers + '*\n' +
+                    '🏆 أكبر مجموعة: *' + (groups[0]?.subject || '—') + '* (' + (groups[0]?.participants?.length || 0) + ' عضو)\n\n' +
+                    '*أعلى 5 مجموعات:*\n' + top5
+                );
+            } catch (e) { await reply('❌ ' + e?.message); }
+            return;
+        }
+
+        // /خاص — إحصاءات الرسائل الخاصة (الغير مقروءة)
+        if (cmd === 'خاص') {
+            try {
+                const store = sock.store;
+                let pvtTotal = 0, pvtUnread = 0;
+                if (store?.chats) {
+                    const all = typeof store.chats.all === 'function'
+                        ? store.chats.all()
+                        : Object.values(store.chats);
+                    for (const chat of all) {
+                        const id = chat.id || '';
+                        if (id.endsWith('@g.us') || id.includes('broadcast') || id.includes('status')) continue;
+                        pvtTotal++;
+                        if ((chat.unreadCount || 0) > 0) pvtUnread++;
+                    }
+                }
+                await reply(
+                    '📱 *إحصاءات الخاص:*\n\n' +
+                    '💬 المحادثات الخاصة: *' + pvtTotal + '*\n' +
+                    '📬 غير مقروءة: *' + pvtUnread + '*\n' +
+                    '📖 مقروءة: *' + (pvtTotal - pvtUnread) + '*'
+                );
+            } catch (e) { await reply('❌ تعذر جلب بيانات المحادثات: ' + e?.message); }
+            return;
+        }
+
     } catch {}
 }
 slashCommandHandler._src = 'slash_system';
@@ -1352,14 +1515,14 @@ function extractPinImages(html) {
             // جميع روابط originals أو 736x
             const found = [...raw.matchAll(/"url"\s*:\s*"(https:\/\/i\.pinimg\.com\/[^"]+)"/g)];
             found.forEach(m => {
-                const u = m[1].replace(/\u002F/g, '/').replace(/\/g, '');
+                const u = m[1].replace(/\u002F/g, '/').replace(/\\/g, '');
                 if (/\.(?:jpg|jpeg|png|webp)(\?|$)/i.test(u)) imgs.push(u);
             });
         }
     } catch {}
 
     // fallback: جمع كل pinimg URLs من الصفحة مباشرة
-    const raw = [...html.matchAll(/https:\/\/i\.pinimg\.com\/[^"'\s<>\]+\.(?:jpg|jpeg|png|webp)/gi)];
+    const raw = [...html.matchAll(/https:\/\/i\.pinimg\.com\/[^"'\s<>]+\.(?:jpg|jpeg|png|webp)/gi)];
     raw.forEach(m => imgs.push(m[0]));
 
     return rankPinImgs(imgs); // مرتبة من الأعلى جودة
@@ -1686,12 +1849,17 @@ async function execute({ sock, msg }) {
         const text = (m.message.conversation || m.message.extendedTextMessage?.text || '').trim();
         if (!text) return;
 
+        // ── Rate limiting ──
+        if (isRateLimited(newSender)) return;
+
         // ✅ أوامر البريفكس المباشر /امر تتجاوز الجلسة — يعالجها slashCommandHandler
         if (text.startsWith('/')) return;
 
-        // إعادة ضبط timeout عند كل تفاعل
+        // إعادة ضبط timeout عند كل تفاعل + تحديث lastActivity
         clearTimeout(timeout);
         timeout = setTimeout(cleanup, 300_000);
+        const sess = activeSessions.get(chatId);
+        if (sess) sess.lastActivity = Date.now();
 
         reactInput(sock, m, text);
 
@@ -2962,7 +3130,7 @@ ${list}
     sock.ev.on('messages.upsert', listener);
     // let بدل const حتى يُعاد ضبطه عند كل تفاعل
     let timeout = setTimeout(cleanup, 300_000);
-    activeSessions.set(chatId, { listener, timeout });
+    activeSessions.set(chatId, { listener, timeout, cleanupFn: cleanup, lastActivity: Date.now() });
 }
 
 export default { NovaUltra, execute };
