@@ -14,6 +14,11 @@ import path        from 'path';
 import os          from 'os';
 import { fileURLToPath } from 'url';
 import { loadPlugins, getPlugins } from '../../handlers/plugins.js';
+import { exec }                        from 'child_process';
+import { promisify }                   from 'util';
+const execAsync = promisify(exec);
+import { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, Browsers } from '@whiskeysockets/baileys';
+import pino                            from 'pino';
 import { downloadMediaMessage }    from '@whiskeysockets/baileys';
 import * as accountUtils           from '../../../accountUtils.js';
 
@@ -111,24 +116,46 @@ async function findPluginByCmd(cmdName) {
     return null;
 }
 
-// ── AI مصلح الأوامر ───────────────────────────────────────────
-async function fixCommandWithAI(filePath, errorText) {
+// ── فاحص الكود — يشغل node --check ──────────────────────────
+async function checkPluginSyntax(filePath) {
+    try {
+        await execAsync(`node --input-type=module --check < "${filePath}"`);
+        return { ok: true };
+    } catch (e) {
+        // استخرج السطر ورقم الخطأ من الرسالة
+        const errMsg = (e.stderr || e.message || '').trim();
+        const lineMatch = errMsg.match(/:(\d+)$/m);
+        const line = lineMatch ? parseInt(lineMatch[1]) : null;
+        // اقرأ السطر المشكل إذا عُرف
+        let codeLine = '';
+        if (line) {
+            try {
+                const lines = fs.readFileSync(filePath, 'utf8').split('\n');
+                codeLine = lines[line - 1]?.trim() || '';
+            } catch {}
+        }
+        return { ok: false, error: errMsg, line, codeLine };
+    }
+}
+
+// ── فحص نصي مبدئي — يكشف أخطاء شائعة قبل التشغيل ───────────
+function quickLint(filePath) {
     const code = fs.readFileSync(filePath, 'utf8');
-    const res  = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 4000,
-            system: 'أنت مطور Node.js/WhatsApp Baileys. حلل الكود والخطأ وأرجع الكود المصحح فقط بدون أي شرح أو backticks.',
-            messages: [{
-                role: 'user',
-                content: `الخطأ:\n${errorText}\n\nالكود:\n${code}`
-            }]
-        })
-    });
-    const data = await res.json();
-    return data.content?.[0]?.text || null;
+    const issues = [];
+    // أقواس غير متوازنة
+    const opens  = (code.match(/\{/g) || []).length;
+    const closes = (code.match(/\}/g) || []).length;
+    if (opens !== closes) issues.push(`الأقواس {} غير متوازنة — مفتوحة:${opens} مغلقة:${closes}`);
+    // async بدون await
+    if (/async function/.test(code) && !/await/.test(code))
+        issues.push('دالة async بدون أي await داخلها');
+    // export default غير موجود
+    if (!/export default/.test(code))
+        issues.push('لا يوجد export default — البوت لن يحملها');
+    // NovaUltra أو command غير موجود
+    if (!/command\s*:/.test(code))
+        issues.push('لا يوجد حقل command — الأمر لن يُعرف');
+    return issues;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -168,16 +195,14 @@ async function protectionHandler(sock, msg) {
             }
         }
 
-        // ── أنتي لينكات (في القروبات فقط، بدون رسائل البوت) ─
-        if (prot.antiLink === 'on' && isGroup && !msg.key.fromMe && LINK_REGEX.test(text)) {
+        // ── أنتي لينكات (في القروبات فقط) ────────────────────
+        if (prot.antiLink === 'on' && isGroup && LINK_REGEX.test(text)) {
             const meta    = await sock.groupMetadata(chatId).catch(() => null);
             if (meta) {
                 const botNum  = sock.user.id.split(':')[0];
-                const admins  = meta.participants.filter(p => p.admin)
-                                   .map(p => p.id.split(':')[0].split('@')[0]);
-                const senderNum = (msg.key.participant || '').split(':')[0].split('@')[0];
-                // تجاهل المشرفين والبوت
-                if (!admins.includes(senderNum) && senderNum !== botNum) {
+                const admins  = meta.participants.filter(p => p.admin).map(p => p.id.split(':')[0].split('@')[0]);
+                const sender  = (msg.key.participant || '').split(':')[0].split('@')[0];
+                if (!admins.includes(sender)) {
                     try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
                 }
             }
@@ -303,40 +328,13 @@ async function execute({ sock, msg }) {
 
     // ── React map ───────────────────────────────────────────
     const REACTS = {
-        // تنقل
-        'رجوع':'🔙','نعم':'👍','لا':'❌','تأكيد':'✅','الغاء':'↩️',
-        // قوائم رئيسية
-        'نظام':'⚙️','نخبة':'👑','بلاجنز':'🧩','تنصيب':'🤖',
-        'إحصاءات':'📊','حماية':'🛡️','أوامر':'🔧','إدارة':'🛠️',
-        // نخبة
-        'اضافة':'➕','حذف':'🗑️','عرض':'📋','مسح الكل':'🗑️',
-        // بلاجنز
-        'بحث':'🔍','قفل':'🔒','فتح':'🔓','نخبة':'👑','عام':'🌐',
-        'مجموعات':'👥','خاص':'💬','للجميع':'🌍','شغل الكل':'🔓','طفي الكل':'🔒',
-        // أدوات
-        'تغيير اسم':'✏️','مصلح AI':'🤖','مسح كاش':'🗑️','تراجع':'↩️',
-        // تنصيب
-        'جديد':'➕','حالة':'📊',
-        // إحصاءات
-        'مسح':'🗑️',
-        // حماية
-        'انتي كراش':'💥','انتي لينكات':'🔗','انتي حذف':'🗑️','انتي سب':'🤬','view once':'👁️',
-        // إدارة أعضاء
-        'رفع مشرف':'👑','تنزيل مشرف':'⬇️','المشرفين':'👥',
-        'طرد':'🚪','حظر':'🔨','الغاء حظر':'✅',
-        'كتم':'🔇','الغاء كتم':'🔊',
-        'تقييد':'🔒','رفع تقييد':'🔓',
-        // إدارة مجموعة
-        'تثبيت':'📌','الغاء التثبيت':'📌','رابط':'🔗',
-        'وضع اسم':'✏️','وضع وصف':'✏️','وضع صورة':'🖼️',
-        'قفل المحادثة':'🔒','فتح المحادثة':'🔓','مسح':'🗑️',
-        // محتوى
-        'وضع ترحيب':'👋','ترحيب':'👋','وضع قوانين':'📜','قوانين':'📜','كلمات ممنوعة':'🚫',
-        // حماية مجموعة
-        'قفل الروابط':'🔗','قفل الصور':'🖼️','قفل الفيديو':'🎥','قفل البوتات':'🤖','نظام الحماية':'🛡️',
-        // بوت
-        'الاوامر':'📋','بحث اوامر':'🔍','معلومات':'ℹ️','اذاعة':'📢','تحديث':'🔄',
-        'حفظ':'💾','تغيير':'✏️','إصلاح':'🔨',
+        'رجوع':'🔙','تشغيل':'✅','اطفاء':'⛔','نعم':'👍','لا':'❌',
+        'حذف':'🗑️','اضافة':'➕','عرض':'📋','مسح الكل':'🗑️',
+        'تنصيب':'🤖','نخبة':'👑','بلاجنز':'🧩','إحصاءات':'📊',
+        'حماية':'🛡️','أوامر':'🔧','بحث':'🔍','تفاصيل':'🔎',
+        'حفظ':'💾','تغيير':'✏️','إصلاح':'🔨','نظام':'⚙️','إدارة':'🛠️','فاحص الكود':'🔍','مسح كاش':'🗑️','نسخ':'💾','استعادة':'↩️','جديد':'➕','حالة':'📊','نعم':'👍',
+        'طرد':'🚪','حظر':'🔨','كتم':'🔇','تثبيت':'📌','رابط':'🔗','قوانين':'📜',
+        'ترحيب':'👋','الاوامر':'📋','معلومات':'ℹ️','اذاعة':'📢','تحديث':'🔄',
     };
 
     const listener = async ({ messages }) => {
@@ -556,54 +554,202 @@ async function execute({ sock, msg }) {
             if (text === 'رجوع') { await update(MAIN_MENU); state = 'MAIN'; return; }
 
             if (text === 'جديد') {
-                await update('🤖 `اكتب اسماً للبوت الفرعي الجديد (إنجليزي/أرقام):`\n\n🔙 *رجوع*');
-                state = 'SUBS_ADD'; return;
+                await update('*اكتب اسماً للبوت الجديد:*\n`حروف وأرقام إنجليزية فقط`\n\n🔙 *رجوع*');
+                state = 'SUBS_NEWNAME'; return;
+            }
+
+            if (text === 'حالة') {
+                const subs = readSubs();
+                if (!subs.length) return update('📭 لا يوجد حسابات فرعية.\n\n🔙 *رجوع*');
+                // اجلب الرقم من مجلد الجلسة لكل بوت
+                const lines = subs.map(name => {
+                    const credsPath = path.join(ACCOUNTS_DIR, name, 'nova', 'data', 'creds.json');
+                    let jid = '—';
+                    if (fs.existsSync(credsPath)) {
+                        try {
+                            const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+                            jid = creds.me?.id?.split(':')[0] || creds.me?.id || '—';
+                        } catch {}
+                    }
+                    return `- *${name}* | +${jid}`;
+                }).join('\n');
+                await update(`*الحسابات الفرعية 🤖*\n\n${lines}\n\n🔙 *رجوع*`);
+                return;
+            }
+
+            if (text.startsWith('ريستارت ')) {
+                const name = text.slice(8).trim();
+                const subs = readSubs();
+                if (!subs.includes(name)) return update(`❌ البوت [ ${name} ] غير موجود.`);
+                process.send?.({ type: 'kill_sub', name });
+                await sleep(800);
+                process.send?.({ type: 'spawn_sub', name });
+                await update(`🔄 تم إعادة تشغيل [ ${name} ]`);
+                await sleep(1000); await showSubMenu(); return;
             }
 
             if (text.startsWith('حذف ')) {
                 const name = text.slice(4).trim();
                 const subs = readSubs();
-                if (!subs.includes(name)) return update(`❌ \`لم يتم العثور على بوت فرعي باسم: ${name}\``);
-                process.send?.({ type: 'kill_sub', name });
-                writeSubs(subs.filter(s => s !== name));
-                await update(`🛑 \`تم إيقاف وحذف البوت [ ${name} ] نهائياً.\``);
-                await sleep(1000); await showSubMenu(); return;
+                if (!subs.includes(name)) return update(`❌ البوت [ ${name} ] غير موجود.`);
+                await update(`⚠️ *تأكيد حذف [ ${name} ]؟*\nاكتب *نعم* أو *رجوع*`);
+                tmp.pendingDelete = name;
+                state = 'SUBS_CONFIRM_DEL'; return;
             }
 
-            if (text.startsWith('ريستارت ')) {
-                const name = text.slice(8).trim();
-                process.send?.({ type: 'kill_sub', name });
-                await sleep(500);
-                process.send?.({ type: 'spawn_sub', name });
-                await update(`🔄 \`تم إعادة تشغيل البوت [ ${name} ].\``);
-                return;
-            }
+            return;
+        }
 
-            if (text === 'حالة') {
-                const subs = readSubs();
-                if (!subs.length) return update('📭 `لا يوجد بوتات فرعية تعمل حالياً.`');
-                const lines = subs.map(n => `- ${n}`).join('\n');
-                await update(`*حالة البوتات الفرعية 🤖:*\n\n${lines}\n\n🔙 *رجوع*`);
-                return;
+        // ── تأكيد الحذف ───────────────────────────────────
+        if (state === 'SUBS_CONFIRM_DEL') {
+            if (text === 'رجوع') { await showSubMenu(); state = 'SUBS'; return; }
+            if (text === 'نعم') {
+                const name = tmp.pendingDelete;
+                process.send?.({ type: 'kill_sub', name });
+                await sleep(400);
+                const res = accountUtils.deleteAccount(name);
+                writeSubs(readSubs().filter(s => s !== name));
+                react(sock, m, res.success ? '🗑️' : '❌');
+                await update(res.success ? `🗑️ تم حذف [ ${name} ] نهائياً.` : `❌ ${res.msg}`);
+                await sleep(1000); await showSubMenu(); state = 'SUBS'; return;
             }
             return;
         }
 
-        if (state === 'SUBS_ADD') {
+        // ── اسم البوت الجديد ──────────────────────────────
+        if (state === 'SUBS_NEWNAME') {
             if (text === 'رجوع') { await showSubMenu(); state = 'SUBS'; return; }
-            const name = text.trim().replace(/[^a-zA-Z0-9_\-]/g, '');
-            if (!name) return update('❌ `اسم غير صحيح، يرجى استخدام أحرف وأرقام إنجليزية فقط.`');
+            const name = text.trim().replace(/[^a-zA-Z0-9_-]/g, '');
+            if (!name) return update('❌ اسم غير صحيح.\n\n🔙 *رجوع*');
 
-            const subPath = path.join(ACCOUNTS_DIR, name);
-            if (fs.existsSync(subPath)) return update(`❌ \`البوت [ ${name} ] موجود مسبقاً.\``);
+            const res = accountUtils.createAccount(name);
+            if (!res.success) return update(`❌ ${res.msg}\n\n🔙 *رجوع*`);
 
-            fs.ensureDirSync(subPath);
             const subs = readSubs();
             if (!subs.includes(name)) { subs.push(name); writeSubs(subs); }
 
-            process.send?.({ type: 'spawn_sub', name });
-            await update(`✅ \`تم إنشاء وتشغيل البوت الفرعي [ ${name} ] بنجاح.\`\n📲 راسل البوت لربطه بحساب واتساب.`);
-            await sleep(2000); await showSubMenu(); state = 'SUBS'; return;
+            tmp.subName = name;
+            await update(`✅ تم إنشاء [ *${name}* ]\n\n📱 *أرسل رقم الهاتف لربط الحساب:*\nمثال: 966501234567\n\n🔙 *رجوع*`);
+            state = 'SUBS_GETPHONE'; return;
+        }
+
+        // ── رقم الهاتف ────────────────────────────────────
+        if (state === 'SUBS_GETPHONE') {
+            if (text === 'رجوع') {
+                // احذف الحساب الفارغ
+                accountUtils.deleteAccount(tmp.subName);
+                writeSubs(readSubs().filter(s => s !== tmp.subName));
+                await showSubMenu(); state = 'SUBS'; return;
+            }
+            const phone = text.replace(/\D/g, '');
+            if (phone.length < 9 || phone.length > 15)
+                return update('❌ رقم غير صحيح.\nمثال: 966501234567\n\n🔙 *رجوع*');
+
+            tmp.subPhone = phone;
+            await update(`⏳ *جاري توليد كود الربط لـ [ ${tmp.subName} ]...*\n\nانتظر لحظة...`);
+            react(sock, m, '⏳');
+
+            // ── إنشاء سوكيت مؤقت للحصول على كود الربط ──
+            try {
+                const sessionDir = path.join(ACCOUNTS_DIR, tmp.subName, 'nova', 'data');
+                fs.ensureDirSync(sessionDir);
+
+                const { state: authState, saveCreds } = await useMultiFileAuthState(sessionDir);
+                const { version } = await fetchLatestBaileysVersion();
+
+                const tempSock = makeWASocket({
+                    version,
+                    logger: pino({ level: 'silent' }),
+                    printQRInTerminal: false,
+                    browser: Browsers.macOS('Chrome'),
+                    auth: authState,
+                    markOnlineOnConnect: false,
+                    syncFullHistory: false,
+                    getMessage: async () => undefined,
+                });
+
+                tempSock.ev.on('creds.update', saveCreds);
+
+                let codeReceived = false;
+
+                tempSock.ev.on('connection.update', async ({ connection, qr, lastDisconnect }) => {
+                    if (codeReceived) return;
+
+                    if (qr) {
+                        // عند ظهور QR — اطلب pairing code
+                        try {
+                            let code = await tempSock.requestPairingCode(phone);
+                            code = code.match(/.{1,4}/g)?.join('-') || code;
+                            codeReceived = true;
+
+                            await update(
+`✅ *كود ربط البوت [ ${tmp.subName} ]*
+
+\`${code}\`
+
+📱 *كيفية الاستخدام:*
+واتساب ← إعدادات ← الأجهزة المرتبطة
+← ربط جهاز ← ربط برمز بدلاً من ذلك
+
+⏱️ الكود صالح لمدة *60 ثانية*
+🔙 *رجوع*`
+                            );
+
+                            // انتظر الاتصال أو timeout
+                            setTimeout(() => {
+                                if (!tempSock.user) {
+                                    try { tempSock.end(); } catch {}
+                                }
+                            }, 65_000);
+
+                        } catch (e) {
+                            await update(`❌ فشل توليد الكود: ${e?.message}\n\n🔙 *رجوع*`);
+                            try { tempSock.end(); } catch {}
+                        }
+                    }
+
+                    if (connection === 'open') {
+                        const jid = tempSock.user?.id?.split(':')[0] || phone;
+                        try { tempSock.end(); } catch {}
+                        // شغّل البوت الفعلي
+                        process.send?.({ type: 'spawn_sub', name: tmp.subName });
+                        react(sock, m, '✅');
+                        await update(
+`🎉 *تم ربط [ ${tmp.subName} ] بنجاح!*
+
+📱 الرقم: +${jid}
+🤖 البوت يعمل الآن.
+
+🔙 *رجوع*`
+                        );
+                        await sleep(2000); await showSubMenu(); state = 'SUBS';
+                    }
+
+                    if (connection === 'close') {
+                        const code = lastDisconnect?.error?.output?.statusCode;
+                        if (code === 401 || code === 403) {
+                            try { tempSock.end(); } catch {}
+                            if (!codeReceived) await update('❌ انتهت صلاحية الكود.\n\n🔙 *رجوع*');
+                        }
+                    }
+                });
+
+            } catch (e) {
+                await update(`❌ خطأ تقني: ${e?.message}\n\n🔙 *رجوع*`);
+            }
+
+            state = 'SUBS_WAITING_PAIR';
+            return;
+        }
+
+        // ── انتظار الربط ─────────────────────────────────
+        if (state === 'SUBS_WAITING_PAIR') {
+            if (text === 'رجوع') {
+                accountUtils.deleteAccount(tmp.subName);
+                writeSubs(readSubs().filter(s => s !== tmp.subName));
+                await showSubMenu(); state = 'SUBS';
+            }
+            return;
         }
 
         // ════════════════════════════════════════════════════
@@ -625,10 +771,10 @@ async function execute({ sock, msg }) {
             if (text === 'رجوع') { await update(MAIN_MENU); state = 'MAIN'; return; }
 
             const protMap = {
-                'انتي كراش':   'antiCrash',
-                'انتي لينكات': 'antiLink',
-                'انتي حذف':    'antiDelete',
-                'انتي سب':     'antiInsult',
+                'أنتي كراش':   'antiCrash',
+                'أنتي لينكات': 'antiLink',
+                'أنتي حذف':    'antiDelete',
+                'أنتي سب':     'antiInsult',
                 'view once':    'antiViewOnce',
             };
 
@@ -655,31 +801,28 @@ async function execute({ sock, msg }) {
                 state = 'RENAME_WAIT'; return;
             }
 
-            if (text === 'مصلح AI') {
-                await update('🔨 `أرسل اسم الأمر + الخطأ البرمجي بهذا الشكل:`\n`اسم الامر\nنص الخطأ`\n\n🔙 *رجوع*');
-                state = 'AI_FIX_WAIT'; return;
+            if (text === 'فاحص الكود') {
+                await update('*اكتب اسم الأمر للفحص:*\n\n🔙 *رجوع*');
+                state = 'CODE_CHECK_WAIT'; return;
             }
 
             if (text === 'مسح كاش') {
                 react(sock, m, '⏳');
                 try {
-                    // مسح كاش البلاجنز المحملة
                     if (global._pluginsCache) global._pluginsCache = {};
                     if (global._handlers)     global._handlers     = {};
                     if (global.featureHandlers) {
                         global.featureHandlers = global.featureHandlers.filter(h =>
-                            ['protection_system','stats_system'].includes(h._src)
-                        );
+                            ['protection_system','stats_system'].includes(h._src));
                     }
-                    // إعادة تحميل الأوامر بعد المسح
                     await loadPlugins().catch(()=>{});
                     react(sock, m, '✅');
-                    await update('✅ `تم مسح الكاش وإعادة تحميل الأوامر بنجاح.`');
+                    await update('✅ تم مسح الكاش وإعادة التحميل.');
                 } catch(e) {
                     react(sock, m, '❌');
-                    await update(`❌ فشل مسح الكاش: ${e?.message}`);
+                    await update(`❌ ${e?.message}`);
                 }
-                await sleep(1000); await showCmdTools(); return;
+                await sleep(800); await showCmdTools(); return;
             }
             return;
         }
@@ -703,47 +846,73 @@ async function execute({ sock, msg }) {
             await sleep(1500); await showCmdTools(); state = 'CMDTOOLS'; return;
         }
 
-        if (state === 'AI_FIX_WAIT') {
+        if (state === 'CODE_CHECK_WAIT') {
             if (text === 'رجوع') { await showCmdTools(); state = 'CMDTOOLS'; return; }
-            const lines   = text.split('\n');
-            const cmdName = lines[0]?.trim();
-            const errText = lines.slice(1).join('\n').trim();
-            if (!cmdName || !errText) return update('❌ `الصيغة غير صحيحة. يرجى إرسالها كالتالي:`\n`اسم الامر\nنص الخطأ`');
+            const fp = await findPluginByCmd(text);
+            if (!fp) return update(`❌ ما وجدت الأمر: [ ${text} ]\nجرب مرة ثانية:`);
 
-            const fp = await findPluginByCmd(cmdName);
-            if (!fp) return update(`❌ \`لم يتم العثور على الأمر: ${cmdName}\``);
-
-            await update('⏳ `جاري تحليل الخطأ وإصلاحه عبر الذكاء الاصطناعي...`');
             react(sock, m, '⏳');
+            await update(`⏳ *جاري فحص [ ${text} ]...*`);
 
-            const fixed = await fixCommandWithAI(fp, errText).catch(() => null);
-            if (!fixed) return update('❌ `فشل الاتصال بخوادم الذكاء الاصطناعي، يرجى المحاولة لاحقاً.`');
+            // فحص سريع أولاً
+            const lintIssues = quickLint(fp);
+            // ثم فحص الـ syntax
+            const checkRes   = await checkPluginSyntax(fp);
 
-            // نسخة احتياطية
-            const backup = fp + '.bak';
-            fs.copyFileSync(fp, backup);
-            fs.writeFileSync(fp, fixed, 'utf8');
+            let report = `*نتيجة فحص الأمر [ ${text} ] 🔍*\n`;
+            report += `📁 \`${path.basename(fp)}\`\n\n`;
 
-            await loadPlugins().catch(()=>{});
-            react(sock, m, '✅');
-            await update(`✅ *تم إصلاح الأمر [ ${cmdName} ] بنجاح.*\n\n💾 \`نسخة احتياطية: ${path.basename(backup)}\`\n\n- اكتب *تراجع* لاستعادة النسخة الأصلية.\n🔙 *رجوع*`);
-            tmp.backupFile = backup; tmp.targetFile = fp;
-            state = 'AI_FIX_RESULT'; return;
+            if (checkRes.ok && lintIssues.length === 0) {
+                report += '✅ *الكود سليم — لا توجد أخطاء*\n';
+            } else {
+                if (!checkRes.ok) {
+                    report += `❌ *خطأ في الـ Syntax:*\n`;
+                    if (checkRes.line) report += `السطر: *${checkRes.line}*\n`;
+                    if (checkRes.codeLine) report += `الكود: \`${checkRes.codeLine}\`\n`;
+                    // أبرز نوع الخطأ
+                    const errShort = (checkRes.error || '').split('\n').slice(0, 2).join(' ').substring(0, 200);
+                    report += `\`${errShort}\`\n\n`;
+                }
+                if (lintIssues.length > 0) {
+                    report += `⚠️ *تحذيرات:*\n`;
+                    lintIssues.forEach(i => { report += `— ${i}\n`; });
+                }
+            }
+
+            report += '\n*نسخ احتياطي | استعادة* — اكتب *نسخ* للنسخ الآن';
+            report += '\n🔙 *رجوع*';
+
+            tmp.checkFile = fp;
+            tmp.checkCmd  = text;
+            await update(report);
+            state = 'CODE_CHECK_RESULT'; return;
         }
 
-        if (state === 'AI_FIX_RESULT') {
-            if (text === 'تراجع') {
-                if (tmp.backupFile && fs.existsSync(tmp.backupFile)) {
-                    fs.copyFileSync(tmp.backupFile, tmp.targetFile);
-                    fs.removeSync(tmp.backupFile);
-                    await loadPlugins().catch(()=>{});
-                    await update('↩️ `تم استعادة النسخة الأصلية بنجاح.`');
-                }
-                await sleep(1000); await showCmdTools(); state = 'CMDTOOLS'; return;
-            }
+        if (state === 'CODE_CHECK_RESULT') {
             if (text === 'رجوع') { await showCmdTools(); state = 'CMDTOOLS'; return; }
+            if (text === 'نسخ') {
+                const backup = tmp.checkFile + '.bak';
+                try {
+                    fs.copyFileSync(tmp.checkFile, backup);
+                    react(sock, m, '💾');
+                    await update(`💾 تم حفظ نسخة احتياطية:\n\`${path.basename(backup)}\`\n\n*استعادة* — للرجوع للنسخة\n🔙 *رجوع*`);
+                } catch(e) { await update(`❌ ${e?.message}`); }
+                return;
+            }
+            if (text === 'استعادة') {
+                const backup = tmp.checkFile + '.bak';
+                if (!fs.existsSync(backup)) return update('❌ لا توجد نسخة احتياطية.\n\n🔙 *رجوع*');
+                fs.copyFileSync(backup, tmp.checkFile);
+                fs.removeSync(backup);
+                await loadPlugins().catch(()=>{});
+                react(sock, m, '↩️');
+                await update('↩️ تم استعادة النسخة الأصلية.');
+                await sleep(800); await showCmdTools(); state = 'CMDTOOLS'; return;
+            }
             return;
         }
+    };
+
 
         // ════════════════════════════════════════════════════
         // 🛠️ ADMIN — إدارة المجموعات
@@ -1024,7 +1193,7 @@ async function execute({ sock, msg }) {
             return;
         }
 
-    }; // end listener
+
 
     async function showAdminMenu() {
         await update(
@@ -1142,24 +1311,27 @@ ${list}
 
     async function showSubMenu() {
         const subs = readSubs();
-        const list = subs.length ? subs.map(n => `- ${n}`).join('\n') : 'لا يوجد بوتات فرعية حالياً';
+        const list = subs.map(name => {
+            const credsPath = path.join(ACCOUNTS_DIR, name, 'nova', 'data', 'creds.json');
+            let jid = '—';
+            if (fs.existsSync(credsPath)) {
+                try {
+                    const c = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+                    jid = c.me?.id?.split(':')[0] || '—';
+                } catch {}
+            }
+            return `— *${name}*  +${jid}`;
+        }).join('\n') || 'لا يوجد بوتات فرعية';
+
         await update(
 `*تنصيب البوتات الفرعية 🤖*
 
-*البوتات الحالية:*
 ${list}
 
-- *جديد*
-\`➕ لإنشاء بوت فرعي جديد.\`
-
-- *حالة*
-\`📊 لمعرفة البوتات التي تعمل حالياً.\`
-
-- *ريستارت [اسم]*
-\`🔄 لإعادة تشغيل بوت معين.\`
-
-- *حذف [اسم]*
-\`🗑️ لإيقاف وحذف بوت معين.\`
+- *جديد* — إنشاء بوت جديد
+- *حالة* — عرض الأرقام المربوطة
+- *ريستارت [اسم]* — إعادة تشغيل
+- *حذف [اسم]* — حذف نهائي
 
 🔙 *رجوع*`
         );
@@ -1204,16 +1376,16 @@ ${topUsers}
         await update(
 `*نظام الحماية 🛡️*
 
-- *انتي كراش* ${s('antiCrash')}
+- *أنتي كراش* ${s('antiCrash')}
 \`💥 لحماية البوت من رسائل التجميد.\`
 
-- *انتي لينكات* ${s('antiLink')}
+- *أنتي لينكات* ${s('antiLink')}
 \`🔗 لمنع إرسال الروابط بالمجموعات.\`
 
-- *انتي حذف* ${s('antiDelete')}
+- *أنتي حذف* ${s('antiDelete')}
 \`🗑️ لإظهار الرسائل التي يحذفها الأعضاء.\`
 
-- *انتي سب* ${s('antiInsult')}
+- *أنتي سب* ${s('antiInsult')}
 \`🤬 لحذف الكلمات البذيئة تلقائياً.\`
 
 - *view once* ${s('antiViewOnce')}
@@ -1229,13 +1401,13 @@ ${topUsers}
 `*أدوات الأوامر 🔧*
 
 - *تغيير اسم*
-\`✏️ لتعديل اسم أي أمر بسهولة (مثال: .تست ➔ .ارثر).\`
+\`✏️ تغيير اسم أمر (مثال: .تست ➔ .ارثر)\`
 
-- *مصلح AI*
-\`🤖 يحلل الأخطاء البرمجية ويصلح أكواد الأوامر تلقائياً.\`
+- *فاحص الكود*
+\`🔍 يفحص syntax البلاجن ويكشف الأخطاء والتحذيرات\`
 
 - *مسح كاش*
-\`🗑️ لمسح ذاكرة التخزين المؤقت وإعادة تحميل الأوامر.\`
+\`🗑️ مسح الكاش وإعادة تحميل الأوامر\`
 
 🔙 *رجوع*`
         );
