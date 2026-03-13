@@ -1,7 +1,7 @@
 // ══════════════════════════════════════════════════════════════
 //  لعبة الغزو الفضائي — غزو.js (Ultra Edition)
 //  المطور: Arthur System
-//  الإصدار: 5.0.1 (Anti-Restriction Update)
+//  الإصدار: 5.0.2 (Random Elimination & Elite Protection)
 // ══════════════════════════════════════════════════════════════
 
 import { jidDecode } from "@whiskeysockets/baileys";
@@ -65,6 +65,7 @@ export async function execute({ sock, msg, args }) {
     const chatId = msg.key.remoteJid;
     const sender = msg.key.participant || chatId;
     const botJid = decodeRaw(sock.user.id);
+    const ownerJid = decodeRaw(global._botConfig?.owner + '@s.whatsapp.net'); // جلب رقم المطور
     const prefix = "/"; // يمكنك استبداله بـ global.prefix
 
     // 1. [ قسم التحكم والإيقاف ] ────────────────────────────────
@@ -87,14 +88,30 @@ export async function execute({ sock, msg, args }) {
     const metadata = await sock.groupMetadata(chatId).catch(() => null);
     if (!metadata) return;
 
-    // استبعاد البوت من قائمة الضحايا باستخدام المنطق الموحد
-    let players = metadata.participants
-        .filter(p => decodeRaw(p.id) !== botJid)
-        .map(p => p.id);
+    const allMembers = metadata.participants.map(p => p.id);
+    let elitesList = [];
+    try {
+        if (typeof sock.getEliteList === 'function') {
+            elitesList = await sock.getEliteList() || [];
+        }
+    } catch (e) {}
+
+    // استبعاد البوت، المطور، والنخبة من قائمة الضحايا
+    let players = [];
+    for (const member of allMembers) {
+        const jid = decodeRaw(member);
+        const isBot = jid === botJid;
+        const isOwner = jid === ownerJid;
+        const isElite = elitesList.includes(jid.split('@')[0]);
+
+        if (!isBot && !isOwner && !isElite) {
+            players.push(jid);
+        }
+    }
 
     if (players.length < 2) {
         return sock.sendMessage(chatId, { 
-            text: `❌ *العدد غير كافي!*\n_اللعبة تحتاج لشخصين على الأقل (غير البوت) لبدء التحدي._` 
+            text: `❌ *العدد غير كافي!*\n_اللعبة تحتاج لشخصين عاديين على الأقل (غير البوت والنخبة والمطور) لبدء التحدي._` 
         });
     }
 
@@ -111,10 +128,10 @@ export async function execute({ sock, msg, args }) {
     players.forEach(p => { session.speedLog[p] = []; });
 
     try {
-        // ─── [ إعلان البداية ] ───
+        // ─── [ إعلان البداية مع المنشن الجماعي ] ───
         await sock.sendMessage(chatId, {
-            text: `🛸 *--- إنـذار بـغـزو فـضـائـي ---*\n\n_تم رصد مركبات تقترب من المجموعه..._\n_القوانين:_ \`أسرع من يكتب الكود ينجو، والأبطأ يطرد!\`\n\n🛡️ *المدافعون:* _${players.length} عضواً_\n⏳ _سيتم إطلاق أول كود بعد_ *15 ثانية*`,
-            mentions: players
+            text: `🛸 *--- إنـذار بـغـزو فـضـائـي ---*\n\n_تم رصد مركبات تقترب من المجموعه..._\n_القوانين:_ \`أسرع من يكتب الكود ينجو، والأبطأ يطرد!\`\n_ملاحظة:_ \`المطور والنخبة في أمان، البقية سيتم تصفيتهم عشوائياً واحداً تلو الآخر!\`\n\n📢 *الـنـداء الـعـام:* ${mentions(allMembers)}\n\n⏳ _سيتم إطلاق أول كود بعد_ *15 ثانية*`,
+            mentions: allMembers
         });
 
         await wait(15000);
@@ -140,10 +157,10 @@ export async function execute({ sock, msg, args }) {
                 if (!m.message || m.key.remoteJid !== chatId) return;
 
                 const txt = (m.message.conversation || m.message.extendedTextMessage?.text || "").trim();
-                const userJid = m.key.participant || m.key.remoteJid;
+                const userJid = decodeRaw(m.key.participant || m.key.remoteJid);
                 
-                // التحقق من صحة الكود والمشاركة
-                if (codes.includes(txt) && players.includes(userJid) && !responded.has(userJid)) {
+                // التحقق من صحة الكود والمشاركة (حتى النخبة يمكنهم المشاركة للسرعة لكن لا يطردون إن لم يفعلوا)
+                if (codes.includes(txt) && !responded.has(userJid)) {
                     responded.set(userJid, Date.now() - roundStart);
                     sock.sendMessage(chatId, { react: { text: '✅', key: m.key } }).catch(() => {});
                 }
@@ -157,19 +174,22 @@ export async function execute({ sock, msg, args }) {
             if (session.stop) break;
 
             // 5. [ تحديد المطرودين وتحديث القائمة ] ───────────────────
+            // تصفية اللاعبين العاديين الذين لم يجاوبوا
             const didNotAnswer = players.filter(p => !responded.has(p));
             let targetsToAbduct = [];
 
             if (didNotAnswer.length > 0) {
-                // من لم يجب يطرد أولاً
-                targetsToAbduct = didNotAnswer;
+                // من لم يجب، نختار واحداً منهم بشكل عشوائي فقط
+                targetsToAbduct = [pick(didNotAnswer)];
             } else {
-                // إذا أجاب الجميع، يطرد الأبطأ (صاحب أطول زمن استجابة)
-                const sortedBySpeed = [...responded.entries()].sort((a, b) => b[1] - a[1]);
-                targetsToAbduct = [sortedBySpeed[0][0]]; 
+                // إذا أجاب الجميع من اللاعبين العاديين، يطرد الأبطأ (صاحب أطول زمن استجابة بينهم)
+                const sortedBySpeed = players
+                    .map(p => ({ jid: p, time: responded.get(p) }))
+                    .sort((a, b) => b.time - a.time);
+                targetsToAbduct = [sortedBySpeed[0].jid]; 
             }
 
-            // تنفيذ الاختطاف (الطرد) - باستخدام نفس منطق kickall.js
+            // تنفيذ الاختطاف (الطرد)
             if (targetsToAbduct.length > 0) {
                 
                 // محاولة الطرد (تجاهل الفحص المسبق للصلاحية)
@@ -178,21 +198,21 @@ export async function execute({ sock, msg, args }) {
                 });
 
                 // إرسال رسالة الاختطاف
-                const msgText = targetsToAbduct.length === 1 
-                    ? pick(ABDUCT_MSGS)(targetsToAbduct[0]) 
-                    : `☄️ *تم اختطاف مجموعة من اللاعبين:* ${mentions(targetsToAbduct)}`;
+                const msgText = pick(ABDUCT_MSGS)(targetsToAbduct[0]);
 
                 await sock.sendMessage(chatId, { 
                     text: msgText, 
                     mentions: targetsToAbduct 
                 });
 
-                // تحديث قائمة اللاعبين النشطين
+                // تحديث قائمة اللاعبين النشطين بإزالة المطرود
                 players = players.filter(p => !targetsToAbduct.includes(p));
                 
                 // حفظ سرعات الذين استجابوا
-                for (const [p, time] of responded.entries()) {
-                    if (session.speedLog[p]) session.speedLog[p].push(time);
+                for (const p of players) {
+                    if (responded.has(p)) {
+                        session.speedLog[p].push(responded.get(p));
+                    }
                 }
             }
 
