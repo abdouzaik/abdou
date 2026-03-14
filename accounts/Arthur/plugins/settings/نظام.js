@@ -1707,13 +1707,15 @@ const ytmp41 = {
                     signal: AbortSignal.timeout(30_000),
                 }
             );
-            if (!resp.ok) return null;
+            if (!resp.ok) { console.error('[ytmp41/video] HTTP', resp.status); return null; }
             const data = await resp.json();
-            // يرجع: { url, title, size, ... } أو { downloadUrl, ... }
-            const dlUrl = data?.url || data?.downloadUrl || data?.link || data?.download?.url;
-            if (!dlUrl) return null;
-            return { url: dlUrl, title: data?.title || '', size: data?.size || 0 };
-        } catch { return null; }
+            console.log('[ytmp41/video] response:', JSON.stringify(data).slice(0, 300));
+            const dlUrl = data?.url || data?.downloadUrl || data?.link
+                       || data?.download?.url || data?.data?.url || data?.result?.url
+                       || data?.result?.downloadUrl;
+            if (!dlUrl) { console.error('[ytmp41/video] لم يُوجد رابط في:', JSON.stringify(data).slice(0,200)); return null; }
+            return { url: dlUrl, title: data?.title || data?.data?.title || '' };
+        } catch (e) { console.error('[ytmp41/video]', e.message); return null; }
     },
 
     // تحميل صوت mp3 (format=mp3)
@@ -1732,12 +1734,15 @@ const ytmp41 = {
                     signal: AbortSignal.timeout(30_000),
                 }
             );
-            if (!resp.ok) return null;
+            if (!resp.ok) { console.error('[ytmp41/audio] HTTP', resp.status); return null; }
             const data = await resp.json();
-            const dlUrl = data?.url || data?.downloadUrl || data?.link || data?.download?.url;
-            if (!dlUrl) return null;
-            return { url: dlUrl, title: data?.title || '' };
-        } catch { return null; }
+            console.log('[ytmp41/audio] response:', JSON.stringify(data).slice(0, 300));
+            const dlUrl = data?.url || data?.downloadUrl || data?.link
+                       || data?.download?.url || data?.data?.url || data?.result?.url
+                       || data?.result?.downloadUrl;
+            if (!dlUrl) { console.error('[ytmp41/audio] لم يُوجد رابط في:', JSON.stringify(data).slice(0,200)); return null; }
+            return { url: dlUrl, title: data?.title || data?.data?.title || '' };
+        } catch (e) { console.error('[ytmp41/audio]', e.message); return null; }
     },
 };
 
