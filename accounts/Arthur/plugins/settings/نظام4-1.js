@@ -1928,113 +1928,35 @@ const ytapi = {
 };
 
 
-//  Instagram Downloader — 3 طرق متتالية بدون API مدفوع
+//  savefrom API — انستقرام فقط
 // ══════════════════════════════════════════════════════════════
-const igDownloader = {
-
-    // ── الطريقة 1: cobalt.tools (public API موثوق) ──────────
-    async cobalt(url) {
-        try {
-            const resp = await fetch('https://api.cobalt.tools/', {
-                method:  'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept':       'application/json',
-                    'User-Agent':   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                },
-                body:   JSON.stringify({ url, downloadMode: 'auto', filenameStyle: 'basic' }),
-                signal: AbortSignal.timeout(20_000),
-            });
-            if (!resp.ok) return null;
-            const json = await resp.json();
-            // status: redirect → direct link | tunnel → streamed
-            if ((json.status === 'redirect' || json.status === 'tunnel') && json.url) {
-                return { url: json.url, title: 'instagram', ext: 'mp4' };
-            }
-            // status: picker → carousel (يرجع مصفوفة)
-            if (json.status === 'picker' && json.picker?.length) {
-                const first = json.picker.find(p => p.type === 'video') || json.picker[0];
-                if (first?.url) return { url: first.url, title: 'instagram', ext: 'mp4', isPhoto: first.type === 'photo' };
-            }
-            return null;
-        } catch { return null; }
+const savefrom = {
+    _headers: {
+        'User-Agent':  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept':      'application/json, text/javascript, */*; q=0.01',
+        'Referer':     'https://en.savefrom.net/',
+        'Origin':      'https://en.savefrom.net',
+        'Accept-Language': 'en-US,en;q=0.9',
     },
-
-    // ── الطريقة 2: snapsave.app (web scraper) ───────────────
-    async snapsave(url) {
-        try {
-            const resp = await fetch('https://snapsave.app/action.php', {
-                method:  'POST',
-                headers: {
-                    'Content-Type':  'application/x-www-form-urlencoded',
-                    'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Origin':        'https://snapsave.app',
-                    'Referer':       'https://snapsave.app/',
-                    'Accept':        '*/*',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                },
-                body:   new URLSearchParams({ url }),
-                signal: AbortSignal.timeout(15_000),
-            });
-            if (!resp.ok) return null;
-            const html = await resp.text();
-            // استخراج رابط mp4 مباشر من HTML
-            const mp4Match = html.match(/href="(https?:\/\/[^"]+\.mp4[^"]*)"/i)
-                          || html.match(/href="(https?:\/\/[^"]+(?:videoplayback|cdninstagram|fbcdn)[^"]*)"/i);
-            if (mp4Match?.[1]) return { url: decodeURIComponent(mp4Match[1].replace(/&amp;/g, '&')), title: 'instagram', ext: 'mp4' };
-            return null;
-        } catch { return null; }
-    },
-
-    // ── الطريقة 3: savefrom (fallback قديم) ─────────────────
-    async savefrom(url) {
+    async getInfo(url) {
         try {
             const encoded = encodeURIComponent(url);
             const resp    = await fetch('https://worker.sf-tools.com/savefrom?url=' + encoded, {
-                headers: {
-                    'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Accept':          'application/json, text/javascript, */*; q=0.01',
-                    'Referer':         'https://en.savefrom.net/',
-                    'Origin':          'https://en.savefrom.net',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                },
-                signal: AbortSignal.timeout(15_000),
+                headers: this._headers,
+                signal:  AbortSignal.timeout(15_000),
             });
             if (!resp.ok) return null;
-            const data = await resp.json();
-            if (!data?.url?.length) return null;
-            const video = data.url
-                .filter(u => u.url && (u.ext === 'mp4' || (u.type || '').includes('video')))
-                .sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0))[0];
-            return video?.url ? { url: video.url, title: data.meta?.title || 'instagram', ext: 'mp4' } : null;
+            return await resp.json();
         } catch { return null; }
     },
-
-    // ── تجربة الطرق بالترتيب ────────────────────────────────
-    async download(url) {
-        const methods = [
-            { name: 'cobalt',    fn: () => this.cobalt(url)   },
-            { name: 'snapsave',  fn: () => this.snapsave(url) },
-            { name: 'savefrom',  fn: () => this.savefrom(url) },
-        ];
-        for (const { name, fn } of methods) {
-            try {
-                const res = await fn();
-                if (res?.url) {
-                    console.log(`[Instagram] نجح بـ ${name}`);
-                    return res;
-                }
-            } catch (e) {
-                console.error(`[Instagram] فشل ${name}:`, e.message);
-            }
-        }
-        return null;
+    async instagram(url) {
+        const data = await this.getInfo(url);
+        if (!data?.url?.length) return null;
+        const video = data.url
+            .filter(u => u.url && (u.ext === 'mp4' || (u.type || '').includes('video')))
+            .sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0))[0];
+        return video?.url ? { url: video.url, title: data.meta?.title || 'instagram', ext: 'mp4' } : null;
     },
-};
-
-// alias للتوافق مع الكود القديم
-const savefrom = {
-    instagram: (url) => igDownloader.savefrom(url),
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -2256,9 +2178,9 @@ async function ytdlpDownload(url, opts = {}) {
     const baseArgs = [
         '--no-playlist',
         '--no-warnings',
-        '--socket-timeout', '12',
-        '--retries', '2',
-        '--fragment-retries', '2',
+        '--socket-timeout', '30',
+        '--retries', '3',
+        '--fragment-retries', '3',
         '--concurrent-fragments', '5',
         ...cookieArg,
         ...userAgentArgs,
@@ -2289,7 +2211,7 @@ async function ytdlpDownload(url, opts = {}) {
             });
             proc.on('error', reject);
             // timeout يدوي
-            const t = setTimeout(() => { try { proc.kill(); } catch {} reject(new Error('timeout')); }, 90_000);
+            const t = setTimeout(() => { try { proc.kill(); } catch {} reject(new Error('timeout')); }, 180_000);
             proc.on('close', () => clearTimeout(t));
         });
     };
@@ -3581,70 +3503,20 @@ ${lines}
                 }
             }
             // ══════════════════════════════════════
-            // انستقرام: cobalt → snapsave → savefrom → yt-dlp
+            // انستقرام: savefrom → yt-dlp
             // ══════════════════════════════════════
             if (isIG && !audioOnly) {
-                const igResult = await igDownloader.download(url);
-                if (igResult?.url) {
+                const sfResult = await savefrom.instagram(url).catch(() => null);
+                if (sfResult?.url) {
                     try {
-                        const buf = await downloadImageBuffer(igResult.url);
-                        const sz  = buf.length;
-                        // carousel/صورة
-                        if (igResult.isPhoto) {
-                            await sock.sendMessage(chatId, {
-                                image:   buf,
-                                caption: `📸 *انستقرام*`,
-                            }, { quoted: m });
-                        } else if (sz > 70 * 1024 * 1024) {
-                            // فيديو كبير → مستند
-                            await sock.sendMessage(chatId, {
-                                document: buf,
-                                mimetype: 'video/mp4',
-                                fileName: 'instagram.mp4',
-                                caption:  `📎 انستقرام — ${(sz/1024/1024).toFixed(1)}MB`,
-                            }, { quoted: m });
-                        } else {
-                            await sock.sendMessage(chatId, {
-                                video:   buf,
-                                caption: `📸 *انستقرام*`,
-                            }, { quoted: m });
-                        }
+                        const buf = await downloadImageBuffer(sfResult.url);
+                        await sock.sendMessage(chatId, {
+                            video: buf, caption: `📸 انستقرام`,
+                        }, { quoted: m });
                         reactOk(sock, m);
                         await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
                         return;
-                    } catch (e) {
-                        console.error('[Instagram] فشل الإرسال:', e.message);
-                        /* fallthrough to yt-dlp */
-                    }
-                }
-                // ── yt-dlp كـ fallback أخير لانستقرام ──
-                try {
-                    const { filePath: igFp, ext: igExt, cleanup: igClean } = await ytdlpDownload(url, { audio: false });
-                    const igSize = fs.statSync(igFp).size;
-                    const igBuf  = await fs.promises.readFile(igFp); igClean();
-                    const isVid  = ['mp4','mov','webm'].includes(igExt);
-                    if (isVid && igSize > 70 * 1024 * 1024) {
-                        await sock.sendMessage(chatId, {
-                            document: igBuf, mimetype: 'video/mp4',
-                            fileName: 'instagram.mp4',
-                            caption:  `📎 انستقرام — ${(igSize/1024/1024).toFixed(1)}MB`,
-                        }, { quoted: m });
-                    } else if (isVid) {
-                        await sock.sendMessage(chatId, {
-                            video: igBuf, caption: `📸 *انستقرام*`,
-                        }, { quoted: m });
-                    } else {
-                        await sock.sendMessage(chatId, {
-                            image: igBuf, caption: `📸 *انستقرام*`,
-                        }, { quoted: m });
-                    }
-                    reactOk(sock, m);
-                    await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
-                    return;
-                } catch {
-                    reactFail(sock, m);
-                    await update(`❌ *فشل تحميل انستقرام*\n⚠️ تأكد أن المنشور عام وليس خاصاً.\n\n🔙 *رجوع*`);
-                    return;
+                    } catch { /* fallthrough to yt-dlp */ }
                 }
             }
 
