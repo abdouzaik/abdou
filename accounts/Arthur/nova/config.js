@@ -13,6 +13,11 @@ const config = {
         code : "ART1ART1",
     },
 
+    // ── Stellarwa API — يوتيوب وغيرها ──
+    api: {
+        url: 'https://api.stellarwa.xyz',
+        key: 'api-JP9nq',
+    },
 
     botState:{
         bot: "on",
