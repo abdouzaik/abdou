@@ -2076,6 +2076,38 @@ const ytapi = {
 
 //  savefrom API — انستقرام فقط
 // ══════════════════════════════════════════════════════════════
+//  Instagram RapidAPI — instagram120 (أسرع من savefrom)
+// ══════════════════════════════════════════════════════════════
+const IG_RAPID_KEY  = '172bbf881fmsh261cc0bdbbbf065p1c32e9jsn68068d5e45a5';
+const IG_RAPID_HOST = 'instagram120.p.rapidapi.com';
+
+const instaRapid = {
+    async reels(username) {
+        try {
+            const resp = await fetch(`https://${IG_RAPID_HOST}/api/instagram/reels`, {
+                method:  'POST',
+                headers: {
+                    'Content-Type':   'application/json',
+                    'x-rapidapi-host': IG_RAPID_HOST,
+                    'x-rapidapi-key':  IG_RAPID_KEY,
+                },
+                body:   JSON.stringify({ username, maxId: '' }),
+                signal: AbortSignal.timeout(20_000),
+            });
+            if (!resp.ok) return null;
+            const json = await resp.json();
+            // يرجع قائمة reels — نأخذ أول واحد
+            const items = json?.data?.items || json?.items || [];
+            if (!items.length) return null;
+            const item = items[0];
+            const videoUrl = item?.video_versions?.[0]?.url
+                          || item?.carousel_media?.[0]?.video_versions?.[0]?.url
+                          || null;
+            return videoUrl ? { url: videoUrl, isVideo: true } : null;
+        } catch { return null; }
+    },
+};
+
 const savefrom = {
     _headers: {
         'User-Agent':  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -2106,20 +2138,16 @@ const savefrom = {
 };
 
 // ══════════════════════════════════════════════════════════════
-//  tikwm API — تيك توك بدون yt-dlp
+//  tikwm API — تيك توك بدون yt-dlp (URL مباشر = أسرع)
 // ══════════════════════════════════════════════════════════════
 const tikwm = {
     async download(url) {
         try {
             const cleanUrl = url.split('?')[0];
-            const resp = await fetch('https://www.tikwm.com/api/', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'User-Agent':   'Mozilla/5.0',
-                },
-                body: new URLSearchParams({ url: cleanUrl, count: '12', cursor: '0', web: '1', hd: '1' }),
-                signal: AbortSignal.timeout(20_000),
+            // hd=1 + play_addr لجودة أعلى
+            const resp = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(cleanUrl)}&hd=1`, {
+                headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12; SM-G991B)' },
+                signal:  AbortSignal.timeout(15_000),
             });
             if (!resp.ok) return null;
             const json = await resp.json();
@@ -2130,9 +2158,36 @@ const tikwm = {
                 video:   d.play   || null,
                 audio:   d.music  || null,
                 title:   d.title  || '',
-                author:  d.author?.nickname || '',
+                author:  d.author?.nickname || d.author?.unique_id || '',
+                duration: d.duration || 0,
+                images:  d.images || null,   // Slideshow
             };
         } catch { return null; }
+    },
+
+    // بحث — يرجع أفضل نتيجتين فقط
+    async search(query, count = 2) {
+        try {
+            const resp = await fetch('https://tikwm.com/api/feed/search', {
+                method:  'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'Cookie':       'current_language=en',
+                    'User-Agent':   'Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 Chrome/116.0.0.0',
+                },
+                body:   new URLSearchParams({ keywords: query, count: String(count * 3), cursor: '0', HD: '1' }),
+                signal: AbortSignal.timeout(15_000),
+            });
+            if (!resp.ok) return [];
+            const json = await resp.json();
+            const videos = (json?.data?.videos || []).filter(v => v.hdplay || v.play);
+            return videos.slice(0, count).map(v => ({
+                videoHD: v.hdplay || v.play,
+                title:   v.title  || '',
+                author:  v.author?.nickname || v.author?.unique_id || '',
+                duration: v.duration || 0,
+            }));
+        } catch { return []; }
     },
 };
 
@@ -2874,6 +2929,21 @@ async function execute({ sock, msg }) {
                 await update(`${text==='فيديو'?'🎬':'🎵'} ارسل الرابط:\n\n🔙 *رجوع*`);
                 pushState('DL_MENU', showDlMenu); state = 'DL_WAIT'; return;
             }
+            if (text === 'بحث تيك') {
+                pushState('DL_MENU', showDlMenu);
+                await update(
+`✧━── ❝ 𝐓𝐈𝐊𝐓𝐎𝐊 ❞ ──━✧
+
+🔍 اكتب كلمة البحث:
+مثال: \`funny cats\`
+
+سيتم إرسال *نتيجتين* 🎵
+
+🔙 *رجوع* | 🏠 *الرئيسية*
+
+✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
+                state = 'TT_SEARCH'; return;
+            }
             if (text === 'بنترست') {
                 pushState('DL_MENU', showDlMenu);
                 await update(
@@ -2950,6 +3020,41 @@ async function execute({ sock, msg }) {
             } catch (e) {
                 reactFail(sock, m);
                 await update(`❌ فشل البحث: ${(e?.message || '').slice(0,100)}\n\n🔙 *رجوع*`);
+            }
+            return;
+        }
+
+        if (state === 'TT_SEARCH') {
+            if (text === 'رجوع') { await goBack(); return; }
+            const query = text.trim();
+            if (!query) return update('❌ اكتب كلمة بحث.\n\n🔙 *رجوع*');
+            reactWait(sock, m);
+            await update(`🔍 *جاري البحث عن "${query}" في تيك توك...*`);
+            try {
+                const results = await tikwm.search(query, 2);
+                if (!results.length) {
+                    await update(`❌ ما لقينا نتائج لـ "${query}"\nجرب كلمة أخرى.\n\n🔙 *رجوع*`);
+                    return;
+                }
+                for (const v of results) {
+                    await sock.sendMessage(chatId, {
+                        video:    { url: v.videoHD },
+                        caption:  `🎵 ${v.author ? '@' + v.author + ' — ' : ''}${v.title || 'TikTok'}`,
+                        mimetype: 'video/mp4',
+                    }, { quoted: m });
+                    await sleep(500);
+                }
+                reactOk(sock, m);
+                await update(
+`☑️ *تم إرسال ${results.length} نتيجة*
+
+🔍 ابحث مجدداً أو:
+🔙 *رجوع* | 🏠 *الرئيسية*
+
+✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
+            } catch (e) {
+                reactFail(sock, m);
+                await update(`❌ فشل البحث: ${(e?.message || '').slice(0, 80)}\n\n🔙 *رجوع*`);
             }
             return;
         }
@@ -3631,28 +3736,38 @@ ${lines}
                     }
                 }
 
-                // ── yt-dlp fallback ──
-                try {
-                    const { filePath: ytFp, ext: ytExt, cleanup: ytClean } = await ytdlpDownload(url, { audio: audioOnly });
-                    const ytSize   = fs.statSync(ytFp).size;
-                    const ytBuf    = await fs.promises.readFile(ytFp); ytClean();
-                    const isVid    = ['mp4','mkv','webm','mov','avi'].includes(ytExt);
-                    const isAud    = ['mp3','m4a','ogg','aac','opus'].includes(ytExt);
-                    if (audioOnly || isAud) {
+                // ── الصوت: yt-dlp فقط (أجودة) ──
+                if (audioOnly) {
+                    try {
+                        const { filePath: ytFp, cleanup: ytClean } = await ytdlpDownload(url, { audio: true });
+                        const ytBuf = await fs.promises.readFile(ytFp); ytClean();
                         await sock.sendMessage(chatId, {
                             audio: ytBuf, mimetype: 'audio/mpeg', ptt: false,
                             fileName: `${title}.mp3`,
                         }, { quoted: m });
-                    } else if (isVid && ytSize > 70 * 1024 * 1024) {
+                        reactOk(sock, m);
+                        await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
+                        return;
+                    } catch (e) {
+                        reactFail(sock, m);
+                        await update(`❌ *فشل تحميل الصوت*\n${(e?.message || '').slice(0, 100)}\n\n🔙 *رجوع*`);
+                        return;
+                    }
+                }
+
+                // ── فيديو: yt-dlp fallback ──
+                try {
+                    const { filePath: ytFp, ext: ytExt, cleanup: ytClean } = await ytdlpDownload(url, { audio: false });
+                    const ytSize = fs.statSync(ytFp).size;
+                    const ytBuf  = await fs.promises.readFile(ytFp); ytClean();
+                    if (ytSize > 70 * 1024 * 1024) {
                         await sock.sendMessage(chatId, {
                             document: ytBuf, mimetype: 'video/mp4',
                             fileName: `${title}.mp4`,
                             caption:  `📎 ${title} — ${(ytSize/1024/1024).toFixed(1)}MB`,
                         }, { quoted: m });
                     } else {
-                        await sock.sendMessage(chatId, {
-                            video: ytBuf, caption: `🎬 *${title}*`,
-                        }, { quoted: m });
+                        await sock.sendMessage(chatId, { video: ytBuf, caption: `🎬 *${title}*` }, { quoted: m });
                     }
                     reactOk(sock, m);
                     await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
@@ -3667,10 +3782,24 @@ ${lines}
             // انستقرام: savefrom → yt-dlp
             // ══════════════════════════════════════
             if (isIG && !audioOnly) {
+                // ── الطريقة 1: RapidAPI (أسرع) ──
+                const rapidResult = await instaRapid.reels(url).catch(() => null);
+                if (rapidResult?.url) {
+                    try {
+                        await sock.sendMessage(chatId, {
+                            video:    { url: rapidResult.url },
+                            caption:  `📸 *انستقرام*`,
+                            mimetype: 'video/mp4',
+                        }, { quoted: m });
+                        reactOk(sock, m);
+                        await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
+                        return;
+                    } catch { /* fallthrough */ }
+                }
+                // ── الطريقة 2: savefrom ──
                 const sfResult = await savefrom.instagram(url).catch(() => null);
                 if (sfResult?.url) {
                     try {
-                        // axios يحمّل كـ arraybuffer ويحافظ على notype صحيح
                         let buf, isVideo;
                         if (axios) {
                             const resp = await axios.get(sfResult.url, {
@@ -3687,16 +3816,9 @@ ${lines}
                             isVideo = sfResult.url.includes('.mp4') || !sfResult.url.match(/\.(?:jpg|jpeg|png|webp|gif)/i);
                         }
                         if (isVideo) {
-                            await sock.sendMessage(chatId, {
-                                video:    buf,
-                                caption:  `📸 *انستقرام*`,
-                                mimetype: 'video/mp4',
-                            }, { quoted: m });
+                            await sock.sendMessage(chatId, { video: buf, caption: `📸 *انستقرام*`, mimetype: 'video/mp4' }, { quoted: m });
                         } else {
-                            await sock.sendMessage(chatId, {
-                                image:   buf,
-                                caption: `📸 *انستقرام*`,
-                            }, { quoted: m });
+                            await sock.sendMessage(chatId, { image: buf, caption: `📸 *انستقرام*` }, { quoted: m });
                         }
                         reactOk(sock, m);
                         await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
@@ -3709,29 +3831,56 @@ ${lines}
             }
 
             // ══════════════════════════════════════
-            // تيك توك: tikwm → yt-dlp
+            // تيك توك: tikwm مباشر (URL بدون buffer)
             // ══════════════════════════════════════
             if (isTT) {
-                const ttResult = await tikwm.download(url).catch(() => null);
-                const ttUrl = audioOnly ? ttResult?.audio : (ttResult?.videoHD || ttResult?.video);
-                if (ttUrl) {
+                if (audioOnly) {
+                    // الصوت فقط: yt-dlp (أجودة)
                     try {
-                        const buf = await downloadImageBuffer(ttUrl);
-                        if (audioOnly) {
-                            await sock.sendMessage(chatId, {
-                                audio: buf, mimetype: 'audio/mpeg', ptt: false,
-                                fileName: `${ttResult.title || 'tiktok'}.mp3`,
-                            }, { quoted: m });
-                        } else {
-                            await sock.sendMessage(chatId, {
-                                video: buf,
-                                caption: `🎵 ${ttResult.author ? '@' + ttResult.author + ' — ' : ''}${ttResult.title || 'TikTok'}`,
-                            }, { quoted: m });
-                        }
+                        const { filePath: ttFp, ext: ttExt, cleanup: ttClean } = await ytdlpDownload(url, { audio: true });
+                        const ttBuf = await fs.promises.readFile(ttFp); ttClean();
+                        await sock.sendMessage(chatId, {
+                            audio: ttBuf, mimetype: 'audio/mpeg', ptt: false,
+                            fileName: 'tiktok_audio.mp3',
+                        }, { quoted: m });
                         reactOk(sock, m);
                         await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
                         return;
-                    } catch { /* fallthrough to yt-dlp */ }
+                    } catch { /* fallthrough */ }
+                } else {
+                    const ttResult = await tikwm.download(url).catch(() => null);
+                    if (ttResult) {
+                        const caption = `🎵 ${ttResult.author ? '@' + ttResult.author + ' — ' : ''}${ttResult.title || 'TikTok'}`;
+                        try {
+                            // Slideshow (images)
+                            if (ttResult.images?.length) {
+                                for (const imgUrl of ttResult.images.slice(0, 10)) {
+                                    await sock.sendMessage(chatId, { image: { url: imgUrl }, caption }, { quoted: m });
+                                    await sleep(300);
+                                }
+                                if (ttResult.audio) {
+                                    await sock.sendMessage(chatId, {
+                                        audio: { url: ttResult.audio }, mimetype: 'audio/mp4',
+                                    }, { quoted: m });
+                                }
+                                reactOk(sock, m);
+                                await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
+                                return;
+                            }
+                            // فيديو عادي — URL مباشر (بدون تحميل Buffer كامل)
+                            const videoUrl = ttResult.videoHD || ttResult.video;
+                            if (videoUrl) {
+                                await sock.sendMessage(chatId, {
+                                    video:   { url: videoUrl },
+                                    caption,
+                                    mimetype: 'video/mp4',
+                                }, { quoted: m });
+                                reactOk(sock, m);
+                                await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
+                                return;
+                            }
+                        } catch { /* fallthrough to yt-dlp */ }
+                    }
                 }
             }
 
@@ -3936,6 +4085,9 @@ ${nav}
 ✦ *صوت*
 \`🎵 تنزيل كصوت MP3\`
 
+✦ *بحث تيك*
+\`🎵 بحث تيك توك — نتيجتين\`
+
 ✦ *بنترست*
 \`📌 بحث وإرسال صور\`
 
@@ -3945,11 +4097,7 @@ ${nav}
 يوتيوب | انستقرام | تيك توك
 فيسبوك | تويتر | ساوند
 
-💡 *يوتيوب:* جودة ≤720p
-💡 *فيسبوك:* Reels & Videos
-📌 *بنترست:* بحث بالكلمة مباشر
-
-🔙 *رجوع*
+🔙 *رجوع* | 🏠 *الرئيسية*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
