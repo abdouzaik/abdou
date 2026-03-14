@@ -611,7 +611,6 @@ async function isBotGroupAdmin(sock, chatId) {
 // ── cooldown لـ antiPrivate ──
 const _pvtCooldown  = new Map();
 const activeSessions = new Map(); // ← moved here: يجب أن تكون قبل setInterval
-global._activeSessions = activeSessions;   // ← يُتاح لأمر تصفير مباشرة
 
 // ── Rate Limiter — الحد: 20 رسالة/دقيقة لكل مستخدم ──
 const _rateMap = new Map();
@@ -1744,72 +1743,12 @@ async function bannedUsersHandler(sock, msg) {
 bannedUsersHandler._src = 'ban_middleware';
 
 // تسجيل الـ handlers
-// ══════════════════════════════════════════════════════════════
-//  تصفير الجلسات — أمر مباشر .تصفير (للمالك فقط)
-// ══════════════════════════════════════════════════════════════
-async function clearSessionsHandler(sock, msg) {
-    try {
-        const chatId    = msg.key.remoteJid;
-        const pfx       = global._botConfig?.prefix || '.';
-        const text      = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
-
-        // يعمل فقط عند الأمر المباشر .تصفير
-        if (text !== `${pfx}تصفير`) return;
-
-        // فحص الصلاحية: fromMe أو النخبة
-        const senderRaw = msg.key.participant || chatId;
-        const isOwner   = msg.key.fromMe;
-        const isElite   = isOwner || await sock.isElite?.({ sock, id: senderRaw }).catch(() => false);
-        if (!isElite) {
-            await sock.sendMessage(chatId, {
-                react: { text: '🚫', key: msg.key },
-            }).catch(() => {});
-            return;
-        }
-
-        const sessions = global._activeSessions;
-        if (!sessions) {
-            await sock.sendMessage(chatId, { text: '⚠️ لا يوجد جلسات مُسجَّلة.' }, { quoted: msg });
-            return;
-        }
-
-        const total = sessions.size;
-        if (total === 0) {
-            await sock.sendMessage(chatId, { text: '✅ لا توجد جلسات نشطة حالياً.' }, { quoted: msg });
-            return;
-        }
-
-        let cleaned = 0;
-        for (const [id, session] of sessions) {
-            try {
-                if (session.timeout)               clearTimeout(session.timeout);
-                if (typeof session.cleanupFn === 'function') session.cleanupFn();
-                else if (typeof session.cleanup === 'function') session.cleanup();
-            } catch {}
-            sessions.delete(id);
-            cleaned++;
-        }
-
-        await sock.sendMessage(chatId, { react: { text: '✔️', key: msg.key } }).catch(() => {});
-        await sock.sendMessage(chatId, {
-            text: `🧹 *تم تنظيف الذاكرة*
-
-✔️ جلسات مُسحت: *${cleaned}/${total}*
-✔️ الجلسات الآن: *${sessions.size}*`,
-        }, { quoted: msg });
-
-    } catch (e) {
-        console.error('[تصفير]', e.message);
-    }
-}
-clearSessionsHandler._src = 'clear_sessions_cmd';
-
 if (!global.featureHandlers) global.featureHandlers = [];
 global.featureHandlers = global.featureHandlers.filter(
     h => !['ban_middleware','protection_system','stats_system','antiDelete_system','slash_system'].includes(h._src)
 );
 // bannedUsersHandler يجب أن يكون الأول دائماً
-global.featureHandlers.push(bannedUsersHandler, protectionHandler, statsAutoHandler, antiDeleteHandler, slashCommandHandler, clearSessionsHandler);
+global.featureHandlers.push(bannedUsersHandler, protectionHandler, statsAutoHandler, antiDeleteHandler, slashCommandHandler);
 
 // ══════════════════════════════════════════════════════════════
 //  تنزيلات — Download Queue (حد أقصى 3 متزامنة)
@@ -1989,35 +1928,113 @@ const ytapi = {
 };
 
 
-//  savefrom API — انستقرام فقط
+//  Instagram Downloader — 3 طرق متتالية بدون API مدفوع
 // ══════════════════════════════════════════════════════════════
-const savefrom = {
-    _headers: {
-        'User-Agent':  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept':      'application/json, text/javascript, */*; q=0.01',
-        'Referer':     'https://en.savefrom.net/',
-        'Origin':      'https://en.savefrom.net',
-        'Accept-Language': 'en-US,en;q=0.9',
+const igDownloader = {
+
+    // ── الطريقة 1: cobalt.tools (public API موثوق) ──────────
+    async cobalt(url) {
+        try {
+            const resp = await fetch('https://api.cobalt.tools/', {
+                method:  'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept':       'application/json',
+                    'User-Agent':   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                },
+                body:   JSON.stringify({ url, downloadMode: 'auto', filenameStyle: 'basic' }),
+                signal: AbortSignal.timeout(20_000),
+            });
+            if (!resp.ok) return null;
+            const json = await resp.json();
+            // status: redirect → direct link | tunnel → streamed
+            if ((json.status === 'redirect' || json.status === 'tunnel') && json.url) {
+                return { url: json.url, title: 'instagram', ext: 'mp4' };
+            }
+            // status: picker → carousel (يرجع مصفوفة)
+            if (json.status === 'picker' && json.picker?.length) {
+                const first = json.picker.find(p => p.type === 'video') || json.picker[0];
+                if (first?.url) return { url: first.url, title: 'instagram', ext: 'mp4', isPhoto: first.type === 'photo' };
+            }
+            return null;
+        } catch { return null; }
     },
-    async getInfo(url) {
+
+    // ── الطريقة 2: snapsave.app (web scraper) ───────────────
+    async snapsave(url) {
+        try {
+            const resp = await fetch('https://snapsave.app/action.php', {
+                method:  'POST',
+                headers: {
+                    'Content-Type':  'application/x-www-form-urlencoded',
+                    'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Origin':        'https://snapsave.app',
+                    'Referer':       'https://snapsave.app/',
+                    'Accept':        '*/*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                },
+                body:   new URLSearchParams({ url }),
+                signal: AbortSignal.timeout(15_000),
+            });
+            if (!resp.ok) return null;
+            const html = await resp.text();
+            // استخراج رابط mp4 مباشر من HTML
+            const mp4Match = html.match(/href="(https?:\/\/[^"]+\.mp4[^"]*)"/i)
+                          || html.match(/href="(https?:\/\/[^"]+(?:videoplayback|cdninstagram|fbcdn)[^"]*)"/i);
+            if (mp4Match?.[1]) return { url: decodeURIComponent(mp4Match[1].replace(/&amp;/g, '&')), title: 'instagram', ext: 'mp4' };
+            return null;
+        } catch { return null; }
+    },
+
+    // ── الطريقة 3: savefrom (fallback قديم) ─────────────────
+    async savefrom(url) {
         try {
             const encoded = encodeURIComponent(url);
             const resp    = await fetch('https://worker.sf-tools.com/savefrom?url=' + encoded, {
-                headers: this._headers,
-                signal:  AbortSignal.timeout(15_000),
+                headers: {
+                    'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept':          'application/json, text/javascript, */*; q=0.01',
+                    'Referer':         'https://en.savefrom.net/',
+                    'Origin':          'https://en.savefrom.net',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                },
+                signal: AbortSignal.timeout(15_000),
             });
             if (!resp.ok) return null;
-            return await resp.json();
+            const data = await resp.json();
+            if (!data?.url?.length) return null;
+            const video = data.url
+                .filter(u => u.url && (u.ext === 'mp4' || (u.type || '').includes('video')))
+                .sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0))[0];
+            return video?.url ? { url: video.url, title: data.meta?.title || 'instagram', ext: 'mp4' } : null;
         } catch { return null; }
     },
-    async instagram(url) {
-        const data = await this.getInfo(url);
-        if (!data?.url?.length) return null;
-        const video = data.url
-            .filter(u => u.url && (u.ext === 'mp4' || (u.type || '').includes('video')))
-            .sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0))[0];
-        return video?.url ? { url: video.url, title: data.meta?.title || 'instagram', ext: 'mp4' } : null;
+
+    // ── تجربة الطرق بالترتيب ────────────────────────────────
+    async download(url) {
+        const methods = [
+            { name: 'cobalt',    fn: () => this.cobalt(url)   },
+            { name: 'snapsave',  fn: () => this.snapsave(url) },
+            { name: 'savefrom',  fn: () => this.savefrom(url) },
+        ];
+        for (const { name, fn } of methods) {
+            try {
+                const res = await fn();
+                if (res?.url) {
+                    console.log(`[Instagram] نجح بـ ${name}`);
+                    return res;
+                }
+            } catch (e) {
+                console.error(`[Instagram] فشل ${name}:`, e.message);
+            }
+        }
+        return null;
     },
+};
+
+// alias للتوافق مع الكود القديم
+const savefrom = {
+    instagram: (url) => igDownloader.savefrom(url),
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -2375,23 +2392,9 @@ async function execute({ sock, msg }) {
     registerWelcomeListener(sock);
 
     if (activeSessions.has(chatId)) {
-        const existing = activeSessions.get(chatId);
-        const existSender = existing.sender || '';
-
-        if (existSender && existSender !== sender) {
-            // شخص آخر يحاول فتح جلسة في نفس المحادثة — نرفض
-            const isGroup = chatId.endsWith('@g.us');
-            const msg2 = isGroup
-                ? `⏳ هناك جلسة *نظام* نشطة حالياً مع شخص آخر في هذا القروب.
-انتظر انتهاءها أو اطلب منه إغلاقها.`
-                : `⏳ يوجد جلسة نشطة بالفعل.`;
-            await sock.sendMessage(chatId, { text: msg2 }, { quoted: msg }).catch(() => {});
-            return;
-        }
-
-        // نفس الشخص يعيد فتح الجلسة — أغلق القديمة وافتح جديدة
-        sock.ev.off('messages.upsert', existing.listener);
-        clearTimeout(existing.timeout);
+        const old = activeSessions.get(chatId);
+        sock.ev.off('messages.upsert', old.listener);
+        clearTimeout(old.timeout);
         activeSessions.delete(chatId);
     }
 
@@ -3578,20 +3581,70 @@ ${lines}
                 }
             }
             // ══════════════════════════════════════
-            // انستقرام: savefrom → yt-dlp
+            // انستقرام: cobalt → snapsave → savefrom → yt-dlp
             // ══════════════════════════════════════
             if (isIG && !audioOnly) {
-                const sfResult = await savefrom.instagram(url).catch(() => null);
-                if (sfResult?.url) {
+                const igResult = await igDownloader.download(url);
+                if (igResult?.url) {
                     try {
-                        const buf = await downloadImageBuffer(sfResult.url);
-                        await sock.sendMessage(chatId, {
-                            video: buf, caption: `📸 انستقرام`,
-                        }, { quoted: m });
+                        const buf = await downloadImageBuffer(igResult.url);
+                        const sz  = buf.length;
+                        // carousel/صورة
+                        if (igResult.isPhoto) {
+                            await sock.sendMessage(chatId, {
+                                image:   buf,
+                                caption: `📸 *انستقرام*`,
+                            }, { quoted: m });
+                        } else if (sz > 70 * 1024 * 1024) {
+                            // فيديو كبير → مستند
+                            await sock.sendMessage(chatId, {
+                                document: buf,
+                                mimetype: 'video/mp4',
+                                fileName: 'instagram.mp4',
+                                caption:  `📎 انستقرام — ${(sz/1024/1024).toFixed(1)}MB`,
+                            }, { quoted: m });
+                        } else {
+                            await sock.sendMessage(chatId, {
+                                video:   buf,
+                                caption: `📸 *انستقرام*`,
+                            }, { quoted: m });
+                        }
                         reactOk(sock, m);
                         await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
                         return;
-                    } catch { /* fallthrough to yt-dlp */ }
+                    } catch (e) {
+                        console.error('[Instagram] فشل الإرسال:', e.message);
+                        /* fallthrough to yt-dlp */
+                    }
+                }
+                // ── yt-dlp كـ fallback أخير لانستقرام ──
+                try {
+                    const { filePath: igFp, ext: igExt, cleanup: igClean } = await ytdlpDownload(url, { audio: false });
+                    const igSize = fs.statSync(igFp).size;
+                    const igBuf  = await fs.promises.readFile(igFp); igClean();
+                    const isVid  = ['mp4','mov','webm'].includes(igExt);
+                    if (isVid && igSize > 70 * 1024 * 1024) {
+                        await sock.sendMessage(chatId, {
+                            document: igBuf, mimetype: 'video/mp4',
+                            fileName: 'instagram.mp4',
+                            caption:  `📎 انستقرام — ${(igSize/1024/1024).toFixed(1)}MB`,
+                        }, { quoted: m });
+                    } else if (isVid) {
+                        await sock.sendMessage(chatId, {
+                            video: igBuf, caption: `📸 *انستقرام*`,
+                        }, { quoted: m });
+                    } else {
+                        await sock.sendMessage(chatId, {
+                            image: igBuf, caption: `📸 *انستقرام*`,
+                        }, { quoted: m });
+                    }
+                    reactOk(sock, m);
+                    await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
+                    return;
+                } catch {
+                    reactFail(sock, m);
+                    await update(`❌ *فشل تحميل انستقرام*\n⚠️ تأكد أن المنشور عام وليس خاصاً.\n\n🔙 *رجوع*`);
+                    return;
                 }
             }
 
@@ -4229,11 +4282,10 @@ ${list}
     sock.ev.on('messages.upsert', wrappedListener);
 
     activeSessions.set(chatId, {
-        listener:     wrappedListener,
+        listener: wrappedListener,
         timeout,
-        cleanupFn:    cleanup,
+        cleanupFn: cleanup,
         lastActivity: Date.now(),
-        sender,           // ← مَن فتح الجلسة (للتحقق من التعارض)
     });
 }
 
