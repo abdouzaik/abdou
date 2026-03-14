@@ -367,15 +367,12 @@ global._invalidatePluginCache = () => { _fileListCache = null; _pluginInfoCache.
 
 // ── safeParsePluginField: استخراج قيم آمن بدون eval/new Function ──
 function safeParsePluginField(source, key, fallback) {
-    // يستخرج القيمة بـ Regex فقط — لا eval، لا new Function
-    const patterns = [
-        new RegExp(key + '\\s*:\\s*[`'"](on|off|true|false)[`'"]', 'i'),
-        new RegExp(key + '\\s*:\\s*(true|false)', 'i'),
-    ];
-    for (const p of patterns) {
-        const m = source.match(p);
-        if (m?.[1]) return m[1];
-    }
+    const r1 = new RegExp(key + String.raw`\s*:\s*["\`'](on|off|true|false)["\`']`, 'i');
+    const r2 = new RegExp(key + String.raw`\s*:\s*(true|false)`, 'i');
+    const m1 = source.match(r1);
+    if (m1?.[1]) return m1[1];
+    const m2 = source.match(r2);
+    if (m2?.[1]) return m2[1];
     return fallback;
 }
 
