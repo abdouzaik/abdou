@@ -322,33 +322,12 @@ async function getPluginInfo(filePath) {
 }
 
 async function updatePluginField(filePath, key, value) {
-    // ✅ إصلاح 1: الإعدادات تُحفظ في plugins_config.json — لا تعديل للكود المصدري
-    const safeVal = String(value).replace(/[`\\]/g, '').replace(/'/g, '').trim();
-    const info    = getPluginInfo(filePath);
-    const cmd     = info.cmd;
-
-    if (key === 'command') {
-        // تغيير الاسم: يحتاج تعديل الكود (مرة واحدة فقط) + تحديث الكونفيج
-        let code = await fs.promises.readFile(filePath, 'utf8');
-        const blockMatch = code.match(/(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*\{([^}]*?command[^}]*?)\}/s);
-        if (blockMatch) {
-            const bs = code.indexOf(blockMatch[0]);
-            let block = blockMatch[0];
-            block = block.replace(/command:\s*[`'"][^`'"]+[`'"]/, `command: '${safeVal}'`);
-            code = code.slice(0, bs) + block + code.slice(bs + blockMatch[0].length);
-        } else {
-            code = code.replace(/command:\s*[`'"][^`'"]+[`'"]/, `command: '${safeVal}'`);
-        }
-        await fs.promises.writeFile(filePath, code, 'utf8');
-    } else {
-        // elite / lock / group / prv → plugins_config.json فقط، الكود لا يُمسّ
-        const convert = v => (key === 'group' || key === 'prv') ? v === 'true' || v === true : v;
-        setPluginCfgField(cmd, key, convert(safeVal));
-    }
-
-    _pluginInfoCache.delete(filePath);
-    _fileListCache = null;
-    for (const [k, v] of _cmdSearchCache) { if (v === filePath) { _cmdSearchCache.delete(k); break; } }
+    // جميع الإعدادات تُحفظ في plugins_config.json — الكود المصدري لا يُمسّ أبداً
+    const cfg = readPluginsCfg();
+    const rel = path.relative(PLUGINS_DIR, filePath).replace(/\\/g, '/');
+    if (!cfg[rel]) cfg[rel] = {};
+    cfg[rel][key === 'command' ? 'alias' : key] = value;
+    writePluginsCfg(cfg);
 }
 // ── findPluginByCmd مع cache ──
 const _cmdSearchCache = new Map();
@@ -412,6 +391,7 @@ async function checkPluginSyntax(filePath) {
 const messageCache = new Map();
 const _deleteKey   = Symbol('deleteRegistered');
 const _welcomeKey  = Symbol('welcomeRegistered');
+const _banKey      = Symbol('banRegistered');
 
 function getMsgTypeAndText(msg) {
     const m = msg?.message;
@@ -459,6 +439,26 @@ function registerDeleteListener(sock) {
     ev.on('messages.delete', ({ keys }) => antiDeleteHandler(sock, keys));
 }
 
+// ── cache صور القروب: طلب واحد فقط لكل قروب كل ساعة ──
+const _grpPhotoCache = new Map(); // { groupId → { buf, ts } }
+
+async function _getGroupPhoto(sock, groupId) {
+    const cached = _grpPhotoCache.get(groupId);
+    if (cached && Date.now() - cached.ts < 3_600_000) return cached.buf;
+    try {
+        const ppUrl = await sock.profilePictureUrl(groupId, 'image');
+        if (!ppUrl) { _grpPhotoCache.set(groupId, { buf: null, ts: Date.now() }); return null; }
+        const r   = await fetch(ppUrl, { signal: AbortSignal.timeout(8_000) });
+        const buf = Buffer.from(await r.arrayBuffer());
+        _grpPhotoCache.set(groupId, { buf, ts: Date.now() });
+        return buf;
+    } catch (e) {
+        console.error('[groupPhoto] فشل جلب الصورة:', e.message);
+        _grpPhotoCache.set(groupId, { buf: null, ts: Date.now() });
+        return null;
+    }
+}
+
 function registerWelcomeListener(sock) {
     const ev = sock.ev;
     if (!ev || ev[_welcomeKey]) return;
@@ -472,15 +472,8 @@ function registerWelcomeListener(sock) {
             const { text: wt } = readJSON(wf, {});
             if (!wt) return;
 
-            // جلب صورة القروب
-            let groupPhoto = null;
-            try {
-                const ppUrl = await sock.profilePictureUrl(id, 'image');
-                if (ppUrl) {
-                    const r = await fetch(ppUrl);
-                    groupPhoto = Buffer.from(await r.arrayBuffer());
-                }
-            } catch {}
+            // جلب صورة القروب مرة واحدة مهما كان عدد الجدد
+            const groupPhoto = await _getGroupPhoto(sock, id);
 
             for (const jid of participants) {
                 const num     = normalizeJid(jid);
@@ -489,18 +482,48 @@ function registerWelcomeListener(sock) {
                     .replace(/\{number\}/g, num);
                 try {
                     if (groupPhoto) {
-                        await sock.sendMessage(id, {
-                            image:    groupPhoto,
-                            caption,
-                            mentions: [jid],
-                        });
+                        await sock.sendMessage(id, { image: groupPhoto, caption, mentions: [jid] });
                     } else {
                         await sock.sendMessage(id, { text: caption, mentions: [jid] });
                     }
-                } catch { await sock.sendMessage(id, { text: caption, mentions: [jid] }).catch(() => {}); }
+                } catch (e) {
+                    console.error('[welcome] فشل إرسال ترحيب:', e.message);
+                    await sock.sendMessage(id, { text: caption, mentions: [jid] }).catch(() => {});
+                }
                 await sleep(800);
             }
-        } catch {}
+        } catch (e) { console.error('[welcomeListener]', e.message); }
+    });
+}
+
+
+// ══════════════════════════════════════════════════════════════
+//  registerBanListener — طرد تلقائي عند محاولة إعادة الانضمام
+// ══════════════════════════════════════════════════════════════
+function registerBanListener(sock) {
+    const ev = sock.ev;
+    if (!ev || ev[_banKey]) return;
+    ev[_banKey] = true;
+    try { ev.setMaxListeners(Math.max(ev.getMaxListeners(), 30)); } catch {}
+    ev.on('group-participants.update', async ({ id, participants, action }) => {
+        if (action !== 'add') return;
+        try {
+            const bans = readJSON(grpFile('bans', id), []);
+            if (!bans.length) return;
+            for (const jid of participants) {
+                const num = normalizeJid(jid);
+                const isBanned = bans.some(b => normalizeJid(b) === num);
+                if (!isBanned) continue;
+                // طرد تلقائي
+                try {
+                    await sock.groupParticipantsUpdate(id, [jid], 'remove');
+                    await sock.sendMessage(id, {
+                        text: `⛔ @${num} محظور من هذه المجموعة`,
+                        mentions: [jid],
+                    });
+                } catch (e) { console.error('[banListener] فشل الطرد التلقائي:', e.message); }
+            }
+        } catch (e) { console.error('[banListener]', e.message); }
     });
 }
 
@@ -516,9 +539,9 @@ const CRASH_PATTERNS = [
 const INSULT_WORDS = ['كس','طيز','شرموط','عاهر','زب','كسمك','عرص','منيوك','قحبة'];
 
 // ✅ FIX-3: regex للروابط شامل يغطي جميع أشكالها
-// ── _LINK_RE آمن من ReDoS: لا تداخل في quantifiers ──
+// ── _LINK_RE: https/www + روابط wa.me / t.me / chat.whatsapp.com ──
 // يكتشف: http/https روابط + روابط wa.me + نطاقات شائعة
-const _LINK_RE = /https?:\/\/[^\s<>"]{4,}|www\.[a-z0-9][\w.-]{1,63}\.[a-z]{2,}[^\s]*/i;
+const _LINK_RE = /(https?:\/\/|\bwww\.)[^\s<>"]{4,}|\b(wa\.me|t\.me|chat\.whatsapp\.com)\/[^\s]+/i;
 const hasLink  = text => _LINK_RE.test(text || '');
 
 // ✅ FIX-3: استخراج كل النصوص الممكنة من الرسالة (نص + كابشن)
@@ -634,6 +657,7 @@ async function protectionHandler(sock, msg) {
     try {
         registerDeleteListener(sock);
         registerWelcomeListener(sock);
+        registerBanListener(sock);
         cacheMessage(msg);
 
         const prot    = readProt();
@@ -794,7 +818,7 @@ async function protectionHandler(sock, msg) {
             if (botMsg) { try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {} }
         }
 
-    } catch {}
+    } catch (e) { console.error('[protectionHandler]', e.message); }
 }
 protectionHandler._src = 'protection_system';
 
@@ -838,7 +862,7 @@ async function antiDeleteHandler(sock, keys) {
                 });
             } catch {}
         }
-    } catch {}
+    } catch (e) { console.error('[antiDeleteHandler]', e.message); }
 }
 antiDeleteHandler._src = 'antiDelete_system';
 
@@ -870,7 +894,7 @@ async function statsAutoHandler(sock, msg) {
         stats.commands[cmd] = (stats.commands[cmd] || 0) + 1;
         stats.users[sender] = (stats.users[sender] || 0) + 1;
         writeStats(stats);
-    } catch {}
+    } catch (e) { console.error('[statsHandler]', e.message); }
 }
 statsAutoHandler._src = 'stats_system';
 
@@ -1071,7 +1095,9 @@ async function slashCommandHandler(sock, msg) {
             await tryDo(async () => {
                 await sock.groupParticipantsUpdate(chatId, [target], 'remove');
                 const bans = readJSON(grpFile('bans', chatId), []);
-                if (!bans.includes(target)) { bans.push(target); writeJSON(grpFile('bans', chatId), bans); }
+                const tN = normalizeJid(target);
+                if (!bans.some(b => normalizeJid(b) === tN)) { bans.push(target); writeJSON(grpFile('bans', chatId), bans); }
+                await replyM('⛔ تم حظر @' + tN + ' من المجموعة', [target]);
             }, '🔨');
             return;
         }
@@ -1079,10 +1105,11 @@ async function slashCommandHandler(sock, msg) {
         if (twoWord === 'فك حظر') {
             const target = await resolveSlashTarget();
             if (!target) return reply('↩️ منشن العضو أو اكتب رقمه.');
-            const bf = grpFile('bans', chatId);
-            writeJSON(bf, readJSON(bf, []).filter(b => b !== target));
+            const tN2 = normalizeJid(target);
+            const bf  = grpFile('bans', chatId);
+            writeJSON(bf, readJSON(bf, []).filter(b => normalizeJid(b) !== tN2));
             react(sock, msg, '✅');
-            await replyM('✅ تم رفع الحظر عن @' + normalizeJid(target), [target]);
+            await replyM('✅ تم رفع الحظر عن @' + tN2, [target]);
             return;
         }
 
@@ -1715,7 +1742,7 @@ async function _ytmp41Poll(progressId, title = '') {
         try {
             const resp = await fetch(
                 `https://${YTMP41_HOST}/api/v1/progress?id=${progressId}`,
-                { headers, signal: AbortSignal.timeout(15_000) }
+                { headers, signal: AbortSignal.timeout(8_000) }
             );
             if (!resp.ok) { console.error('[ytmp41/poll] HTTP', resp.status); continue; }
             const data = await resp.json();
@@ -2094,10 +2121,10 @@ async function ytdlpDownload(url, opts = {}) {
     const baseArgs = [
         '--no-playlist',
         '--no-warnings',
-        '--socket-timeout', '30',
-        '--retries', '3',
-        '--fragment-retries', '3',
-        '--concurrent-fragments', '4',
+        '--socket-timeout', '12',
+        '--retries', '2',
+        '--fragment-retries', '2',
+        '--concurrent-fragments', '5',
         ...cookieArg,
         ...userAgentArgs,
         '--output', path.join(outDir, 'media.%(ext)s'),
@@ -2127,7 +2154,7 @@ async function ytdlpDownload(url, opts = {}) {
             });
             proc.on('error', reject);
             // timeout يدوي
-            const t = setTimeout(() => { try { proc.kill(); } catch {} reject(new Error('timeout')); }, 180_000);
+            const t = setTimeout(() => { try { proc.kill(); } catch {} reject(new Error('timeout')); }, 90_000);
             proc.on('close', () => clearTimeout(t));
         });
     };
@@ -2836,22 +2863,28 @@ async function execute({ sock, msg }) {
                 await tryAdminAction(() => sock.groupParticipantsUpdate(chatId, [target], 'remove'), '🚪');
             } else if (action === 'ban') {
                 await tryAdminAction(async () => {
+                    // طرد من القروب + إضافة للقائمة السوداء
                     await sock.groupParticipantsUpdate(chatId, [target], 'remove');
                     const bans = readJSON(grpFile('bans', chatId), []);
-                    if (!bans.includes(target)) { bans.push(target); writeJSON(grpFile('bans', chatId), bans); }
-                    // حظر على مستوى الحساب أيضاً
-                    if (target.endsWith('@s.whatsapp.net')) {
-                        try { await sock.updateBlockStatus(target, 'block'); } catch {}
+                    const tNum = normalizeJid(target);
+                    if (!bans.some(b => normalizeJid(b) === tNum)) {
+                        bans.push(target);
+                        writeJSON(grpFile('bans', chatId), bans);
                     }
+                    await sock.sendMessage(chatId, {
+                        text: `⛔ تم حظر @${tNum} من المجموعة`,
+                        mentions: [target],
+                    });
                 }, '🔨');
             } else if (action === 'unban') {
-                const bans = readJSON(grpFile('bans', chatId), []);
-                writeJSON(grpFile('bans', chatId), bans.filter(b => b !== target));
-                // فك الحظر
-                if (target.endsWith('@s.whatsapp.net')) {
-                    try { await sock.updateBlockStatus(target, 'unblock'); } catch {}
-                }
+                const tNum2 = normalizeJid(target);
+                const bans  = readJSON(grpFile('bans', chatId), []);
+                writeJSON(grpFile('bans', chatId), bans.filter(b => normalizeJid(b) !== tNum2));
                 react(sock, m, '✅');
+                await sock.sendMessage(chatId, {
+                    text: `✅ تم رفع الحظر عن @${tNum2}`,
+                    mentions: [target],
+                });
             } else if (action === 'mute') {
                 const mins = parseInt((text.match(/\d+/) || ['30'])[0]);
                 await tryAdminAction(async () => {
@@ -3606,24 +3639,18 @@ ${lines}
             .sort((a,b) => b[1]-a[1]).slice(0,5)
             .map(([k,v],i) => `${i+1}. ${k}: *${v}*`).join('\n') || 'لا يوجد';
 
-        // ── تحويل LID إلى phone JID قبل العرض ──
+        // ── تحويل أي JID لـ phone@s.whatsapp.net ثم @mention ──
         const userEntries = Object.entries(s.users||{}).sort((a,b) => b[1]-a[1]).slice(0,5);
         const resolvedUsers = [];
         for (const [raw, count] of userEntries) {
-            let phoneJid = raw;
-            // لو مش phone JID (يعني LID أو مجهول) — حاول تحوّله
-            if (!raw.endsWith('@s.whatsapp.net')) {
-                try {
-                    // نبحث في آخر meta مخزّن
-                    const num = raw.split('@')[0].split(':')[0];
-                    phoneJid  = num + '@s.whatsapp.net';
-                } catch { phoneJid = raw; }
-            }
-            resolvedUsers.push({ jid: phoneJid, count });
+            // استخراج رقم نظيف من أي شكل (phone / LID / device suffix)
+            const num      = raw.split('@')[0].split(':')[0].replace(/\D/g, '');
+            const phoneJid = num.length >= 7 ? num + '@s.whatsapp.net' : raw;
+            resolvedUsers.push({ jid: phoneJid, num, count });
         }
 
         const topUsers = resolvedUsers
-            .map((u, i) => `${i+1}. @${normalizeJid(u.jid)}: *${u.count}*`)
+            .map((u, i) => `${i+1}. @${u.num || normalizeJid(u.jid)}: *${u.count}*`)
             .join('\n') || 'لا يوجد';
         const mentions = resolvedUsers
             .map(u => u.jid)
@@ -3653,20 +3680,20 @@ ${topUsers}
     }
 
     async function showProtMenu() {
-        const p = readProt(), s = k => p[k]==='on'?'✅':'⛔';
+        const p = readProt(), s = k => p[k]==='on'?'✅ مفعّل':'⛔ معطّل';
         await update(
 `✧━── ❝ 𝐏𝐑𝐎𝐓𝐄𝐂𝐓𝐈𝐎𝐍 ❞ ──━✧
 
-✦ *انتي كراش* ${s('antiCrash')}
-\`💥 حماية من رسائل التجميد\`
+✦ *انتي كراش* — ${s('antiCrash')}
+\`💥 حماية من رسائل التجميد والكراش\`
 
-✦ *انتي حذف* ${s('antiDelete')}
-\`🗑️ إظهار الرسائل المحذوفة\`
+✦ *انتي حذف* — ${s('antiDelete')}
+\`🗑️ إظهار الرسائل المحذوفة مع نوعها\`
 
-✦ *انتي سب* ${s('antiInsult')}
-\`🤬 حذف الكلمات البذيئة\`
+✦ *انتي سب* — ${s('antiInsult')}
+\`🤬 حذف الكلمات البذيئة + تحذير\`
 
-اكتب اسم الميزة لتشغيلها او إيقافها
+اكتب اسم الميزة لتشغيلها أو إيقافها
 🔙 *رجوع* | 🏠 *الرئيسية*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
@@ -3675,16 +3702,16 @@ ${topUsers}
     
     async function showCmdTools() {
         await update(
-`✧━── ❝ 𝐓𝐎𝐎𝐋𝐒 ❞ ──━✧
+`✧━── ❝ 𝐂𝐌𝐃 𝐓𝐎𝐎𝐋𝐒 ❞ ──━✧
 
 ✦ *تغيير اسم*
-\`✏️ تغيير اسم امر موجود\`
+\`✏️ اكتبه ثم اكتب الاسم الجديد للأمر\`
 
 ✦ *فاحص الكود*
-\`🔍 فحص syntax البلاجن\`
+\`🔍 فحص أخطاء السينتاكس لأي بلاجن\`
 
 ✦ *مسح كاش*
-\`🗑️ مسح الكاش وإعادة التحميل\`
+\`🗑️ مسح الكاش وإعادة تحميل الأوامر\`
 
 🔙 *رجوع* | 🏠 *الرئيسية*
 
@@ -3722,10 +3749,29 @@ ${topUsers}
         await update(
 `✧━── ❝ 𝐌𝐄𝐌𝐁𝐄𝐑𝐒 ❞ ──━✧
 
-✦ *رفع مشرف*    ✦ *تنزيل مشرف*
-✦ *المشرفين*     ✦ *طرد*
-✦ *حظر*          ✦ *الغاء حظر*
-✦ *كتم*          ✦ *الغاء كتم*
+✦ *رفع مشرف*
+\`👑 رد على رسالته أو منشنه لترقيته\`
+
+✦ *تنزيل مشرف*
+\`⬇️ رد على رسالته أو منشنه لإزالة صلاحياته\`
+
+✦ *المشرفين*
+\`📋 عرض قائمة المشرفين الحاليين\`
+
+✦ *طرد*
+\`🚪 رد على رسالته أو منشنه لطرده\`
+
+✦ *حظر*
+\`🔨 طرد + حظر من العودة تلقائياً\`
+
+✦ *الغاء حظر*
+\`✅ رفع الحظر والسماح بالعودة\`
+
+✦ *كتم*
+\`🔇 اكتب المدة بالدقائق ثم منشن أو رد\`
+
+✦ *الغاء كتم*
+\`🔊 رد على رسالته أو منشنه\`
 
 🔙 *رجوع* | 🏠 *الرئيسية*
 
@@ -3736,9 +3782,14 @@ ${topUsers}
         await update(
 `✧━── ❝ 𝐌𝐄𝐒𝐒𝐀𝐆𝐄𝐒 ❞ ──━✧
 
-✦ *تثبيت*         \`📌 رد على الرسالة\`
-✦ *الغاء التثبيت* \`📌 رد على الرسالة\`
-✦ *مسح*           \`🗑️ رد على الرسالة\`
+✦ *تثبيت*
+\`📌 رد على الرسالة لتثبيتها في القروب\`
+
+✦ *الغاء التثبيت*
+\`📌 رد على الرسالة لإلغاء تثبيتها\`
+
+✦ *مسح*
+\`🗑️ رد على الرسالة لحذفها نهائياً\`
 
 🔙 *رجوع* | 🏠 *الرئيسية*
 
@@ -3749,10 +3800,29 @@ ${topUsers}
         await update(
 `✧━── ❝ 𝐆𝐑𝐎𝐔𝐏 ❞ ──━✧
 
-✦ *وضع اسم*      ✦ *وضع وصف*
-✦ *وضع صورة*      ✦ *قفل المحادثة*
-✦ *فتح المحادثة*  ✦ *رابط*
-✦ *انضم*          ✦ *خروج*
+✦ *وضع اسم*
+\`✏️ تغيير اسم المجموعة\`
+
+✦ *وضع وصف*
+\`📝 تغيير وصف المجموعة\`
+
+✦ *وضع صورة*
+\`🖼️ ارسل أو اقتبس صورة لتغيير صورة القروب\`
+
+✦ *قفل المحادثة*
+\`🔒 منع الأعضاء من الكتابة\`
+
+✦ *فتح المحادثة*
+\`🔓 السماح للأعضاء بالكتابة\`
+
+✦ *رابط*
+\`🔗 الحصول على رابط دعوة المجموعة\`
+
+✦ *انضم*
+\`✅ الانضمام لمجموعة عبر رابط\`
+
+✦ *خروج*
+\`🚪 مغادرة هذه المجموعة\`
 
 🔙 *رجوع* | 🏠 *الرئيسية*
 
@@ -3763,9 +3833,20 @@ ${topUsers}
         await update(
 `✧━── ❝ 𝐂𝐎𝐍𝐓𝐄𝐍𝐓 ❞ ──━✧
 
-✦ *وضع ترحيب*   ✦ *ترحيب*
-✦ *وضع قوانين*  ✦ *قوانين*
+✦ *وضع ترحيب*
+\`👋 اكتب رسالة الترحيب — استخدم {name} للاسم و {number} للرقم\`
+
+✦ *ترحيب*
+\`📋 عرض رسالة الترحيب الحالية أو حذفها\`
+
+✦ *وضع قوانين*
+\`📜 اكتب قوانين المجموعة\`
+
+✦ *قوانين*
+\`📋 عرض قوانين المجموعة أو حذفها\`
+
 ✦ *كلمات ممنوعة*
+\`🚫 إدارة قائمة الكلمات المحظورة\`
 
 🔙 *رجوع* | 🏠 *الرئيسية*
 
@@ -3773,16 +3854,22 @@ ${topUsers}
     }
 
     async function showAdminLocksMenu() {
-        const p = readProt(), s = k => p[k]==='on'?'🔒':'🔓';
+        const p = readProt(), s = k => p[k]==='on'?'🔒 مفعّل':'🔓 معطّل';
         await update(
 `✧━── ❝ 𝐋𝐎𝐂𝐊𝐒 ❞ ──━✧
 
-✦ *قفل الروابط* ${s('antiLink')}
-✦ *قفل الصور*   ${s('images')}
-✦ *قفل الفيديو* ${s('videos')}
-✦ *قفل البوتات* ${s('bots')}
+✦ *قفل الروابط* — ${s('antiLink')}
+\`🔗 اضغط لتغيير حالة قفل الروابط\`
 
-اكتب اسم القفل لتشغيله او إيقافه
+✦ *قفل الصور* — ${s('images')}
+\`🖼️ اضغط لتغيير حالة قفل الصور\`
+
+✦ *قفل الفيديو* — ${s('videos')}
+\`🎬 اضغط لتغيير حالة قفل الفيديو\`
+
+✦ *قفل البوتات* — ${s('bots')}
+\`🤖 اضغط لتغيير حالة قفل البوتات\`
+
 🔙 *رجوع* | 🏠 *الرئيسية*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
@@ -3792,9 +3879,14 @@ ${topUsers}
         await update(
 `✧━── ❝ 𝐓𝐎𝐎𝐋𝐒 ❞ ──━✧
 
-✦ *معلومات*   \`ℹ️ معلومات المجموعة\`
-✦ *اذاعة*     \`📢 إرسال لكل المجموعات\`
-✦ *تحديث*     \`🔄 إعادة تحميل الاوامر\`
+✦ *معلومات*
+\`ℹ️ عرض معلومات المجموعة وإحصاءاتها\`
+
+✦ *اذاعة*
+\`📢 إرسال رسالة لجميع المجموعات\`
+
+✦ *تحديث*
+\`🔄 إعادة تحميل جميع الأوامر\`
 
 🔙 *رجوع* | 🏠 *الرئيسية*
 
