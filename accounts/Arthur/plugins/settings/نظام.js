@@ -41,26 +41,43 @@ fs.ensureDirSync(DATA_DIR);
 // ══════════════════════════════════════════════════════════════
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ── pinMessage — wrapper يجرب كل طرق Baileys للتثبيت ──
-// بعض الإصدارات: groupMessagePin()، إصدارات أحدث: sendMessage({ pin: ... })
+// ── pinMessage — مبني على grupo-pin.js (الطريقة الشغالة فعلاً) ──
 async function pinMessage(sock, chatId, stanzaId, participant, pin = true) {
-    const msgKey = { remoteJid: chatId, id: stanzaId, fromMe: false, participant };
+    const msgKey = {
+        remoteJid:   chatId,
+        fromMe:      false,
+        id:          stanzaId,
+        participant: participant,
+    };
     const errors = [];
-    // طريقة 1: groupMessagePin الكلاسيكية
-    if (typeof sock.groupMessagePin === 'function') {
-        try { await sock.groupMessagePin(chatId, msgKey, pin ? 1 : 2, pin ? 86400 : undefined); return; } catch (e) { errors.push(e.message); }
-    }
-    // طريقة 2: pinMessage مباشرة (إصدارات أحدث)
-    if (typeof sock.pinMessage === 'function') {
-        try { await sock.pinMessage(chatId, msgKey, pin ? 1 : 2); return; } catch (e) { errors.push(e.message); }
-    }
-    // طريقة 3: sendMessage مع نوع pin
+
+    // طريقة 1 (grupo-pin.js): sendMessage مع { pin: key, type, time }
+    // هذه الطريقة الشغالة في الإصدارات الحديثة من Baileys
     try {
         await sock.sendMessage(chatId, {
-            pin: { key: msgKey, type: pin ? 1 : 2, time: pin ? 86400 : 0 },
+            pin:  msgKey,
+            type: pin ? 1 : 2,
+            time: pin ? 604800 : 86400,
         });
         return;
-    } catch (e) { errors.push(e.message); }
+    } catch (e) { errors.push('sendMessage/pin: ' + e.message); }
+
+    // طريقة 2: { pin: { key, type, time } } (هيكل بديل)
+    try {
+        await sock.sendMessage(chatId, {
+            pin: { key: msgKey, type: pin ? 1 : 2, time: pin ? 604800 : 86400 },
+        });
+        return;
+    } catch (e) { errors.push('sendMessage/pinObj: ' + e.message); }
+
+    // طريقة 3: groupMessagePin الكلاسيكية كـ fallback أخير
+    if (typeof sock.groupMessagePin === 'function') {
+        try {
+            await sock.groupMessagePin(chatId, msgKey, pin ? 1 : 2, pin ? 604800 : undefined);
+            return;
+        } catch (e) { errors.push('groupMessagePin: ' + e.message); }
+    }
+
     throw new Error(errors.join(' | ') || 'فشل التثبيت');
 }
 
@@ -548,29 +565,43 @@ async function protectionHandler(sock, msg) {
         // ✅ FIX-3: استخراج النص من كل أنواع الرسائل
         const text = getAllMsgText(msg);
 
-        // ── ✅ FIX-1: antiPrivate — إرسال رسالة ثم حظر صحيح ──
+        // ── antiPrivate — مبني على مضاد-الخاص.js ──
         if (prot.antiPrivate === 'on' && !isGroup && !msg.key.fromMe) {
-            // تنظيف JID للحصول على رقم الهاتف فقط
-            const senderNum  = normalizeJid(chatId);
+            const senderNum   = normalizeJid(chatId);
             const cooldownKey = senderNum;
-            const now = Date.now();
-
-            // تجاهل إذا كان cooldown نشطاً
+            const now         = Date.now();
             if ((_pvtCooldown.get(cooldownKey) || 0) > now) return;
-            _pvtCooldown.set(cooldownKey, now + 60_000); // cooldown دقيقة
+            _pvtCooldown.set(cooldownKey, now + 60_000);
+
+            const warnText =
+`❍━═━═━═━═━═━═━❍
+❍⇇ ممنوع الكلام في الخاص
+❍
+❍⇇ تم حظرك تلقائياً
+❍⇇ مضاد الخاص مفعّل
+❍━═━═━═━═━═━═━❍`;
 
             try {
-                // أرسل تحذيراً أولاً
-                await sock.sendMessage(chatId, {
-                    text: `❍━═━═━═━❍\n❍⇇ ممنوع الكلام في الخاص\n❍⇇ تم حظرك تلقائياً\n❍━═━═━═━❍`
-                });
-                await sleep(800);
-                // بناء الـ JID الصحيح للحظر: يجب أن يكون @s.whatsapp.net
-                const blockJid = senderNum + '@s.whatsapp.net';
-                await sock.updateBlockStatus(blockJid, 'block');
-            } catch (e) {
-                console.error('[antiPrivate] فشل الحظر:', e.message);
+                await sock.sendMessage(chatId, { text: warnText }, { quoted: msg });
+                await sleep(600);
+            } catch {}
+
+            // حظر مع fallback (مضاد-الخاص.js يجرب 'block' ثم true)
+            try { await sock.updateBlockStatus(chatId, 'block'); }
+            catch {
+                try { await sock.updateBlockStatus(chatId, true); }
+                catch (e) { console.error('[antiPrivate] فشل الحظر:', e.message); }
             }
+
+            // إشعار الأونر
+            try {
+                const ownerJid = sock.user?.id;
+                if (ownerJid && ownerJid !== chatId) {
+                    await sock.sendMessage(ownerJid, {
+                        text: `🔒 *مضاد الخاص*\nتم حظر شخص\nالرقم: wa.me/${senderNum}`,
+                    });
+                }
+            } catch {}
             return;
         }
 
@@ -1664,6 +1695,49 @@ const savefrom = {
             .filter(u => u.url && (u.ext === 'mp4' || (u.type || '').includes('video')))
             .sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0))[0];
         return video?.url ? { url: video.url, title: data.meta?.title || 'instagram', ext: 'mp4' } : null;
+    },
+};
+
+// ══════════════════════════════════════════════════════════════
+//  tikwm API — تيك توك بدون yt-dlp (الأموثق والأسرع)
+//  tikwm.com API مجاني ولا يحتاج مفتاح
+// ══════════════════════════════════════════════════════════════
+const tikwm = {
+    async download(url) {
+        try {
+            // تنظيف الـ URL (vt.tiktok → full url)
+            const cleanUrl = url.split('?')[0];
+            const resp = await fetch('https://www.tikwm.com/api/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'User-Agent':   'Mozilla/5.0',
+                },
+                body: new URLSearchParams({
+                    url:   cleanUrl,
+                    count: '12',
+                    cursor: '0',
+                    web: '1',
+                    hd: '1',
+                }),
+                signal: AbortSignal.timeout(20_000),
+            });
+            if (!resp.ok) return null;
+            const json = await resp.json();
+            if (!json?.data) return null;
+            const d = json.data;
+            return {
+                // فيديو HD (بدون watermark)
+                videoHD:  d.hdplay || d.play || null,
+                // فيديو عادي (بدون watermark)
+                video:    d.play   || null,
+                // صوت فقط
+                audio:    d.music  || null,
+                title:    d.title  || '',
+                author:   d.author?.nickname || '',
+                duration: d.duration || 0,
+            };
+        } catch { return null; }
     },
 };
 
@@ -3068,7 +3142,39 @@ ${lines}
                 }
             }
 
-            // ── yt-dlp: باقي المنصات (تيك توك / فيسبوك / تويتر) أو fallback ──
+            // ══════════════════════════════════════════
+            // تيك توك: tikwm → yt-dlp
+            // ══════════════════════════════════════════
+            const isTT = url.includes('tiktok.com') || url.includes('vt.tiktok') || url.includes('vm.tiktok');
+            if (isTT) {
+                const ttResult = await tikwm.download(url).catch(() => null);
+                const ttUrl    = audioOnly
+                    ? ttResult?.audio
+                    : (ttResult?.videoHD || ttResult?.video);
+                if (ttUrl) {
+                    try {
+                        const buf = await downloadImageBuffer(ttUrl);
+                        if (audioOnly) {
+                            await sock.sendMessage(chatId, {
+                                audio:    buf,
+                                mimetype: 'audio/mpeg',
+                                ptt:      false,
+                                fileName: `${ttResult.title || 'tiktok'}.mp3`,
+                            }, { quoted: m });
+                        } else {
+                            await sock.sendMessage(chatId, {
+                                video:   buf,
+                                caption: `🎵 ${ttResult.author ? '@' + ttResult.author + ' — ' : ''}${ttResult.title || 'TikTok'}`,
+                            }, { quoted: m });
+                        }
+                        react(sock, m, '✅');
+                        await update(`✅ *تم التحميل!* (tikwm)\n\n🔙 *رجوع*`);
+                        return;
+                    } catch { /* fallthrough to yt-dlp */ }
+                }
+            }
+
+            // ── yt-dlp: باقي المنصات (فيسبوك / تويتر) أو fallback ──
             const { filePath, ext, cleanup } = await ytdlpDownload(url, { audio: audioOnly });
             const fileSize = fs.statSync(filePath).size;
             const isVideo  = ['mp4','mkv','webm','mov','avi'].includes(ext);
