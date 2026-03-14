@@ -611,6 +611,7 @@ async function isBotGroupAdmin(sock, chatId) {
 // ── cooldown لـ antiPrivate ──
 const _pvtCooldown  = new Map();
 const activeSessions = new Map(); // ← moved here: يجب أن تكون قبل setInterval
+global._activeSessions = activeSessions;   // ← يُتاح لأمر تصفير مباشرة
 
 // ── Rate Limiter — الحد: 20 رسالة/دقيقة لكل مستخدم ──
 const _rateMap = new Map();
@@ -1743,12 +1744,72 @@ async function bannedUsersHandler(sock, msg) {
 bannedUsersHandler._src = 'ban_middleware';
 
 // تسجيل الـ handlers
+// ══════════════════════════════════════════════════════════════
+//  تصفير الجلسات — أمر مباشر .تصفير (للمالك فقط)
+// ══════════════════════════════════════════════════════════════
+async function clearSessionsHandler(sock, msg) {
+    try {
+        const chatId    = msg.key.remoteJid;
+        const pfx       = global._botConfig?.prefix || '.';
+        const text      = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
+
+        // يعمل فقط عند الأمر المباشر .تصفير
+        if (text !== `${pfx}تصفير`) return;
+
+        // فحص الصلاحية: fromMe أو النخبة
+        const senderRaw = msg.key.participant || chatId;
+        const isOwner   = msg.key.fromMe;
+        const isElite   = isOwner || await sock.isElite?.({ sock, id: senderRaw }).catch(() => false);
+        if (!isElite) {
+            await sock.sendMessage(chatId, {
+                react: { text: '🚫', key: msg.key },
+            }).catch(() => {});
+            return;
+        }
+
+        const sessions = global._activeSessions;
+        if (!sessions) {
+            await sock.sendMessage(chatId, { text: '⚠️ لا يوجد جلسات مُسجَّلة.' }, { quoted: msg });
+            return;
+        }
+
+        const total = sessions.size;
+        if (total === 0) {
+            await sock.sendMessage(chatId, { text: '✅ لا توجد جلسات نشطة حالياً.' }, { quoted: msg });
+            return;
+        }
+
+        let cleaned = 0;
+        for (const [id, session] of sessions) {
+            try {
+                if (session.timeout)               clearTimeout(session.timeout);
+                if (typeof session.cleanupFn === 'function') session.cleanupFn();
+                else if (typeof session.cleanup === 'function') session.cleanup();
+            } catch {}
+            sessions.delete(id);
+            cleaned++;
+        }
+
+        await sock.sendMessage(chatId, { react: { text: '✔️', key: msg.key } }).catch(() => {});
+        await sock.sendMessage(chatId, {
+            text: `🧹 *تم تنظيف الذاكرة*
+
+✔️ جلسات مُسحت: *${cleaned}/${total}*
+✔️ الجلسات الآن: *${sessions.size}*`,
+        }, { quoted: msg });
+
+    } catch (e) {
+        console.error('[تصفير]', e.message);
+    }
+}
+clearSessionsHandler._src = 'clear_sessions_cmd';
+
 if (!global.featureHandlers) global.featureHandlers = [];
 global.featureHandlers = global.featureHandlers.filter(
     h => !['ban_middleware','protection_system','stats_system','antiDelete_system','slash_system'].includes(h._src)
 );
 // bannedUsersHandler يجب أن يكون الأول دائماً
-global.featureHandlers.push(bannedUsersHandler, protectionHandler, statsAutoHandler, antiDeleteHandler, slashCommandHandler);
+global.featureHandlers.push(bannedUsersHandler, protectionHandler, statsAutoHandler, antiDeleteHandler, slashCommandHandler, clearSessionsHandler);
 
 // ══════════════════════════════════════════════════════════════
 //  تنزيلات — Download Queue (حد أقصى 3 متزامنة)
@@ -2314,9 +2375,23 @@ async function execute({ sock, msg }) {
     registerWelcomeListener(sock);
 
     if (activeSessions.has(chatId)) {
-        const old = activeSessions.get(chatId);
-        sock.ev.off('messages.upsert', old.listener);
-        clearTimeout(old.timeout);
+        const existing = activeSessions.get(chatId);
+        const existSender = existing.sender || '';
+
+        if (existSender && existSender !== sender) {
+            // شخص آخر يحاول فتح جلسة في نفس المحادثة — نرفض
+            const isGroup = chatId.endsWith('@g.us');
+            const msg2 = isGroup
+                ? `⏳ هناك جلسة *نظام* نشطة حالياً مع شخص آخر في هذا القروب.
+انتظر انتهاءها أو اطلب منه إغلاقها.`
+                : `⏳ يوجد جلسة نشطة بالفعل.`;
+            await sock.sendMessage(chatId, { text: msg2 }, { quoted: msg }).catch(() => {});
+            return;
+        }
+
+        // نفس الشخص يعيد فتح الجلسة — أغلق القديمة وافتح جديدة
+        sock.ev.off('messages.upsert', existing.listener);
+        clearTimeout(existing.timeout);
         activeSessions.delete(chatId);
     }
 
@@ -2719,9 +2794,9 @@ async function execute({ sock, msg }) {
 `✧━── ❝ 𝐏𝐈𝐍𝐓𝐄𝐑𝐄𝐒𝐓 ❞ ──━✧
 
 🔍 اكتب كلمة البحث بالإنجليزي:
-مثال: \`arthur\`، \`aesthetic\`، \`nature\`
+مثال: \`Arthur\`، \`DJN\`، \`nature\`
 
-سيتم إرسال *10 صور* مطابقة 📸
+سيتم إرسال *14 صورة* مطابقة 📸
 
 🔙 *رجوع* | 🏠 *الرئيسية*
 
@@ -2740,7 +2815,7 @@ async function execute({ sock, msg }) {
             reactWait(sock, m);
             await update(`🔍 *جاري البحث عن "${query}" في Pinterest...*`);
             try {
-                const images = await searchPinterest(query, 10);
+                const images = await searchPinterest(query, 14);
                 if (!images.length) {
                     await update(`❌ ما لقينا صور لـ "${query}"\nجرب كلمة أخرى.\n\n🔙 *رجوع*`);
                     return;
@@ -2755,7 +2830,7 @@ async function execute({ sock, msg }) {
                 }
 
                 // أرسل كـ media group (ألبوم) — كل 5 صور دفعة
-                const BATCH = 5;
+                const BATCH = 7;
                 let sent = 0;
                 for (let i = 0; i < buffers.length; i += BATCH) {
                     const batch = buffers.slice(i, i + BATCH);
@@ -2766,16 +2841,16 @@ async function execute({ sock, msg }) {
                         caption: `📌 *${query}* — صورة ${i+1}${batch.length > 1 ? `-${i+batch.length}` : ''}/${buffers.length}${first.title ? '\n' + first.title : ''}`,
                     });
                     sent++;
-                    await sleep(300);
+                    await sleep(200);
                     // أرسل الباقي بدون كابشن
                     for (let j = 1; j < batch.length; j++) {
                         try {
                             await sock.sendMessage(chatId, { image: batch[j].buf });
                             sent++;
-                            await sleep(200);
+                            await sleep(150);
                         } catch {}
                     }
-                    await sleep(500); // pause between batches
+                    await sleep(350); // pause between batches
                 }
 
                 reactOk(sock, m);
@@ -3749,7 +3824,7 @@ ${nav}
 \`🎵 تنزيل كصوت MP3\`
 
 ✦ *بنترست*
-\`📌 بحث وإرسال 10 صور\`
+\`📌 بحث وإرسال صور\`
 
 *او ارسل رابط مباشرة*
 
@@ -4154,10 +4229,11 @@ ${list}
     sock.ev.on('messages.upsert', wrappedListener);
 
     activeSessions.set(chatId, {
-        listener: wrappedListener,
+        listener:     wrappedListener,
         timeout,
-        cleanupFn: cleanup,
+        cleanupFn:    cleanup,
         lastActivity: Date.now(),
+        sender,           // ← مَن فتح الجلسة (للتحقق من التعارض)
     });
 }
 
