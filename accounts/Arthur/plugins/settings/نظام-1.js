@@ -1614,6 +1614,59 @@ const savetube = {
     },
 };
 
+
+// ══════════════════════════════════════════════════════════════
+//  savefrom API — يوتيوب + انستقرام بدون yt-dlp
+//  يُستخدم كـ fallback ثانٍ بعد savetube
+// ══════════════════════════════════════════════════════════════
+const savefrom = {
+    _headers: {
+        'User-Agent':  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept':      'application/json, text/javascript, */*; q=0.01',
+        'Referer':     'https://en.savefrom.net/',
+        'Origin':      'https://en.savefrom.net',
+        'Accept-Language': 'en-US,en;q=0.9',
+    },
+
+    async getInfo(url) {
+        try {
+            const encoded = encodeURIComponent(url);
+            const apiUrl  = 'https://worker.sf-tools.com/savefrom?url=' + encoded;
+            const resp    = await fetch(apiUrl, {
+                headers: this._headers,
+                signal:  AbortSignal.timeout(15_000),
+            });
+            if (!resp.ok) return null;
+            return await resp.json();
+        } catch { return null; }
+    },
+
+    async youtube(url, audioOnly = false) {
+        const data = await this.getInfo(url);
+        if (!data?.url?.length) return null;
+        if (audioOnly) {
+            const audio = data.url.find(u =>
+                u.ext === 'mp3' || u.ext === 'm4a' || (u.type || '').includes('audio')
+            );
+            return audio?.url ? { url: audio.url, title: data.meta?.title || '', ext: audio.ext || 'mp3' } : null;
+        }
+        const videos = data.url
+            .filter(u => (u.ext === 'mp4' || (u.type || '').includes('video')) && u.url)
+            .sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
+        const chosen = videos.find(u => parseInt(u.quality) <= 720) || videos[0];
+        return chosen?.url ? { url: chosen.url, title: data.meta?.title || '', ext: 'mp4', quality: chosen.quality } : null;
+    },
+
+    async instagram(url) {
+        const data = await this.getInfo(url);
+        if (!data?.url?.length) return null;
+        const video = data.url
+            .filter(u => u.url && (u.ext === 'mp4' || (u.type || '').includes('video')))
+            .sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0))[0];
+        return video?.url ? { url: video.url, title: data.meta?.title || 'instagram', ext: 'mp4' } : null;
+    },
+};
+
 const DL_PLATFORMS = {
     'يوتيوب':   ['youtube.com', 'youtu.be'],
     'انستقرام': ['instagram.com', 'instagr.am'],
@@ -2944,14 +2997,18 @@ ${lines}
 
         _dlActive++;
         try {
-            // ── يوتيوب: جرب savetube أولاً (أسرع) ثم yt-dlp ──
-            const isYT = url.includes('youtube.com') || url.includes('youtu.be');
+            const isYT  = url.includes('youtube.com') || url.includes('youtu.be');
+            const isIG  = url.includes('instagram.com') || url.includes('instagr.am');
+
+            // ══════════════════════════════════════════
+            // يوتيوب: savetube → savefrom → yt-dlp
+            // ══════════════════════════════════════════
             if (isYT) {
-                react(sock, m, '⏳');
+                // 1) savetube
                 const stResult = await savetube.download(url, audioOnly ? 'audio' : 'video').catch(() => null);
                 if (stResult?.url) {
                     try {
-                        const buf = await downloadImageBuffer(stResult.url); // reuse: downloads any URL to buffer
+                        const buf = await downloadImageBuffer(stResult.url);
                         if (audioOnly) {
                             await sock.sendMessage(chatId, {
                                 audio: buf, mimetype: 'audio/mpeg', ptt: false,
@@ -2964,13 +3021,54 @@ ${lines}
                             }, { quoted: m });
                         }
                         react(sock, m, '✅');
-                        await update(`✅ *تم التحميل!*\n\n🔙 *رجوع*`);
+                        await update(`✅ *تم التحميل!* (savetube)\n\n🔙 *رجوع*`);
+                        return;
+                    } catch { /* fallthrough */ }
+                }
+                // 2) savefrom
+                const sfResult = await savefrom.youtube(url, audioOnly).catch(() => null);
+                if (sfResult?.url) {
+                    try {
+                        const buf = await downloadImageBuffer(sfResult.url);
+                        if (audioOnly) {
+                            await sock.sendMessage(chatId, {
+                                audio: buf, mimetype: 'audio/mpeg', ptt: false,
+                                fileName: `${sfResult.title || 'audio'}.${sfResult.ext || 'mp3'}`,
+                            }, { quoted: m });
+                        } else {
+                            await sock.sendMessage(chatId, {
+                                video: buf,
+                                caption: `🎬 ${sfResult.title || platform}${sfResult.quality ? ' · ' + sfResult.quality + 'p' : ''}`,
+                            }, { quoted: m });
+                        }
+                        react(sock, m, '✅');
+                        await update(`✅ *تم التحميل!* (savefrom)\n\n🔙 *رجوع*`);
+                        return;
+                    } catch { /* fallthrough to yt-dlp */ }
+                }
+                // 3) yt-dlp fallback
+            }
+
+            // ══════════════════════════════════════════
+            // انستقرام: savefrom → yt-dlp
+            // ══════════════════════════════════════════
+            if (isIG && !audioOnly) {
+                const sfResult = await savefrom.instagram(url).catch(() => null);
+                if (sfResult?.url) {
+                    try {
+                        const buf = await downloadImageBuffer(sfResult.url);
+                        await sock.sendMessage(chatId, {
+                            video: buf,
+                            caption: `📸 ${sfResult.title || 'Instagram'}`,
+                        }, { quoted: m });
+                        react(sock, m, '✅');
+                        await update(`✅ *تم التحميل!* (savefrom)\n\n🔙 *رجوع*`);
                         return;
                     } catch { /* fallthrough to yt-dlp */ }
                 }
             }
 
-            // ── yt-dlp للبقية أو كـ fallback ──
+            // ── yt-dlp: باقي المنصات (تيك توك / فيسبوك / تويتر) أو fallback ──
             const { filePath, ext, cleanup } = await ytdlpDownload(url, { audio: audioOnly });
             const fileSize = fs.statSync(filePath).size;
             const isVideo  = ['mp4','mkv','webm','mov','avi'].includes(ext);
