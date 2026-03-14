@@ -3226,6 +3226,7 @@ ${lines}
             }
 
             // ── yt-dlp: باقي المنصات أو fallback ──
+            const { filePath, ext, cleanup } = await ytdlpDownload(url, { audio: audioOnly });
             const fileSize = fs.statSync(filePath).size;
             const isVideo  = ['mp4','mkv','webm','mov','avi'].includes(ext);
             const isAudio  = ['mp3','m4a','ogg','aac','opus','wav'].includes(ext);
