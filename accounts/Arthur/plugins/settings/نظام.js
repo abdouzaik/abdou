@@ -12,10 +12,14 @@
 import fs            from 'fs-extra';
 import path          from 'path';
 import os            from 'os';
+import crypto        from 'crypto';
 import { fileURLToPath } from 'url';
-import { exec }      from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
+import { createRequire } from 'module';
 import { loadPlugins, getPlugins } from '../../handlers/plugins.js';
+const _require = createRequire(import.meta.url);
+let axios; try { axios = (await import('axios')).default; } catch { axios = null; }
 import {
     downloadMediaMessage,
     jidDecode,
@@ -36,6 +40,30 @@ fs.ensureDirSync(DATA_DIR);
 //  helpers
 // ══════════════════════════════════════════════════════════════
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ── pinMessage — wrapper يجرب كل طرق Baileys للتثبيت ──
+// بعض الإصدارات: groupMessagePin()، إصدارات أحدث: sendMessage({ pin: ... })
+async function pinMessage(sock, chatId, stanzaId, participant, pin = true) {
+    const msgKey = { remoteJid: chatId, id: stanzaId, fromMe: false, participant };
+    const errors = [];
+    // طريقة 1: groupMessagePin الكلاسيكية
+    if (typeof sock.groupMessagePin === 'function') {
+        try { await sock.groupMessagePin(chatId, msgKey, pin ? 1 : 2, pin ? 86400 : undefined); return; } catch (e) { errors.push(e.message); }
+    }
+    // طريقة 2: pinMessage مباشرة (إصدارات أحدث)
+    if (typeof sock.pinMessage === 'function') {
+        try { await sock.pinMessage(chatId, msgKey, pin ? 1 : 2); return; } catch (e) { errors.push(e.message); }
+    }
+    // طريقة 3: sendMessage مع نوع pin
+    try {
+        await sock.sendMessage(chatId, {
+            pin: { key: msgKey, type: pin ? 1 : 2, time: pin ? 86400 : 0 },
+        });
+        return;
+    } catch (e) { errors.push(e.message); }
+    throw new Error(errors.join(' | ') || 'فشل التثبيت');
+}
+
 
 const react = (sock, msg, e) =>
     sock.sendMessage(msg.key.remoteJid, { react: { text: e, key: msg.key } }).catch(() => {});
@@ -698,11 +726,21 @@ async function statsAutoHandler(sock, msg) {
         const pfx  = global._botConfig?.prefix || '.';
         const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
         if (!text.startsWith(pfx)) return;
-        const cmd       = text.slice(pfx.length).split(/\s+/)[0]?.toLowerCase();
-        const senderRaw = msg.key.participant || msg.key.remoteJid;
-        if (!cmd || !senderRaw) return;
-        // نفضّل حفظ phone JID — LID يُبقى كما هو
-        const sender = senderRaw;
+        const cmd = text.slice(pfx.length).split(/\s+/)[0]?.toLowerCase();
+        if (!cmd) return;
+
+        // ── نستخدم msg.sender.pn (phone JID من messages.js) لو متاح
+        // وإلا نحاول نحوّل الـ LID لرقم عبر normalizeJid
+        const senderRaw = msg.sender?.pn          // phone JID الصحيح (من messages.js)
+                       || msg.key.participant
+                       || msg.key.remoteJid;
+        if (!senderRaw) return;
+
+        // نضمن أن المفتاح المحفوظ دائماً phone JID وليس LID
+        const sender = senderRaw.endsWith('@s.whatsapp.net')
+            ? senderRaw
+            : normalizeJid(senderRaw) + '@s.whatsapp.net';
+
         const stats = readStats();
         stats.total = (stats.total || 0) + 1;
         stats.commands[cmd] = (stats.commands[cmd] || 0) + 1;
@@ -977,7 +1015,7 @@ async function slashCommandHandler(sock, msg) {
             if (!ctx?.stanzaId) return reply('↩️ رد على الرسالة اللي تبي تثبتها.');
             react(sock, msg, '⏳');
             try {
-                await sock.groupMessagePin(chatId, { id: ctx.stanzaId, participant: ctx.participant, remoteJid: chatId }, 1, 604800);
+                await pinMessage(sock, chatId, ctx.stanzaId, ctx.participant, true);
                 react(sock, msg, '📌');
             } catch (e) {
                 react(sock, msg, '❌');
@@ -991,7 +1029,7 @@ async function slashCommandHandler(sock, msg) {
             if (!ctx?.stanzaId) return reply('↩️ رد على الرسالة المثبتة.');
             react(sock, msg, '⏳');
             try {
-                await sock.groupMessagePin(chatId, { id: ctx.stanzaId, participant: ctx.participant, remoteJid: chatId }, 0);
+                await pinMessage(sock, chatId, ctx.stanzaId, ctx.participant, false);
                 react(sock, msg, '📌');
             } catch (e) { react(sock, msg, '❌'); await reply('❌ ' + (e?.message || '').slice(0,100)); }
             return;
@@ -1505,8 +1543,77 @@ global.featureHandlers = global.featureHandlers.filter(
 global.featureHandlers.push(protectionHandler, statsAutoHandler, antiDeleteHandler, slashCommandHandler);
 
 // ══════════════════════════════════════════════════════════════
-//  تنزيلات — yt-dlp
+//  تنزيلات — Download Queue (حد أقصى 3 متزامنة)
 // ══════════════════════════════════════════════════════════════
+const DL_MAX_CONCURRENT = 3;
+let   _dlActive = 0;
+
+
+// ══════════════════════════════════════════════════════════════
+//  savetube API — تحميل يوتيوب بدون yt-dlp (أسرع وأموثق)
+// ══════════════════════════════════════════════════════════════
+const savetube = {
+    base: 'https://media.savetube.me/api',
+    headers: {
+        'accept': '*/*',
+        'content-type': 'application/json',
+        'origin': 'https://yt.savetube.me',
+        'referer': 'https://yt.savetube.me/',
+        'user-agent': 'Postify/1.0.0',
+    },
+    extractId(url) {
+        const p = [
+            /youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/,
+            /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
+            /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+        ];
+        for (const r of p) { const m = url.match(r); if (m) return m[1]; }
+        return null;
+    },
+    async req(endpoint, data = {}, method = 'post') {
+        try {
+            const fullUrl = endpoint.startsWith('http') ? endpoint : this.base + endpoint;
+            const opts    = { method, headers: this.headers };
+            if (method === 'post') opts.body = JSON.stringify(data);
+            const resp = await fetch(fullUrl, opts);
+            if (!resp.ok) return { ok: false };
+            return { ok: true, data: await resp.json() };
+        } catch { return { ok: false }; }
+    },
+    async decrypt(enc) {
+        const key      = Buffer.from('C5D58EF67A7584E4A29F6C35BBC4EB12', 'hex');
+        const raw      = Buffer.from(enc, 'base64');
+        const iv       = raw.slice(0, 16);
+        const content  = raw.slice(16);
+        const decipher = crypto.createDecipheriv('aes-128-cbc', key, iv);
+        const dec      = Buffer.concat([decipher.update(content), decipher.final()]);
+        return JSON.parse(dec.toString());
+    },
+    async getCDN() {
+        const r = await this.req('/random-cdn', {}, 'get');
+        return r.ok ? r.data?.cdn : null;
+    },
+    async download(url, type = 'audio') {
+        const id  = this.extractId(url);
+        if (!id) return null;
+        const cdn = await this.getCDN();
+        if (!cdn) return null;
+        const info = await this.req(`https://${cdn}/v2/info`, { url: `https://www.youtube.com/watch?v=${id}` });
+        if (!info.ok) return null;
+        const dec  = await this.decrypt(info.data.data).catch(() => null);
+        if (!dec) return null;
+        const dl   = await this.req(`https://${cdn}/download`, {
+            id,
+            downloadType: type,
+            quality: type === 'audio' ? 'mp3' : '720',
+            key: dec.key,
+        });
+        const link = dl.data?.data?.downloadUrl;
+        if (!link) return null;
+        return { url: link, title: dec.title || '' };
+    },
+};
+
 const DL_PLATFORMS = {
     'يوتيوب':   ['youtube.com', 'youtu.be'],
     'انستقرام': ['instagram.com', 'instagr.am'],
@@ -1713,12 +1820,10 @@ async function ytdlpDownload(url, opts = {}) {
     // ✅ دالة تشغيل آمنة بـ spawn بدل execAsync
     const runYtdlp = (extraArgs) => {
         return new Promise((resolve, reject) => {
-            const { spawn } = require('child_process');
             const allArgs = [...baseArgs, ...igArgs, ...extraArgs, safeUrl];
-            // إذا bin فيه مسافات (مثل "python3 -m yt_dlp") نقسّمه
-            const parts = bin.split(' ');
-            const binCmd = parts[0];
-            const binPre = parts.slice(1);
+            const parts   = bin.split(' ');
+            const binCmd  = parts[0];
+            const binPre  = parts.slice(1);
             const proc = spawn(binCmd, [...binPre, ...allArgs], {
                 env: process.env,
             });
@@ -2241,22 +2346,42 @@ async function execute({ sock, msg }) {
                     await update(`❌ ما لقينا صور لـ "${query}"\nجرب كلمة أخرى.\n\n🔙 *رجوع*`);
                     return;
                 }
-                await update(`📸 *وجدنا ${images.length} صورة — جاري الإرسال...*`);
-                let sent = 0;
+                await update(`📸 *وجدنا ${images.length} صورة — جاري التحميل...*`);
+
+                // حمّل كل الصور أولاً
+                const buffers = [];
                 for (const pin of images) {
-                    try {
-                        const buf = await downloadImageBuffer(pin.url);
-                        await sock.sendMessage(chatId, {
-                            image:   buf,
-                            caption: `📌 *${query}*${pin.title ? ' — ' + pin.title : ''} (${sent+1}/${images.length})`,
-                        });
-                        sent++;
-                        await sleep(400);
-                    } catch {}
+                    try { buffers.push({ buf: await downloadImageBuffer(pin.url), title: pin.title || '' }); }
+                    catch { /* تجاهل الصور الفاشلة */ }
                 }
+
+                // أرسل كـ media group (ألبوم) — كل 5 صور دفعة
+                const BATCH = 5;
+                let sent = 0;
+                for (let i = 0; i < buffers.length; i += BATCH) {
+                    const batch = buffers.slice(i, i + BATCH);
+                    // أرسل الأولى في الدفعة كـ image عادية مع كابشن يوضح العدد
+                    const first = batch[0];
+                    await sock.sendMessage(chatId, {
+                        image:   first.buf,
+                        caption: `📌 *${query}* — صورة ${i+1}${batch.length > 1 ? `-${i+batch.length}` : ''}/${buffers.length}${first.title ? '\n' + first.title : ''}`,
+                    });
+                    sent++;
+                    await sleep(300);
+                    // أرسل الباقي بدون كابشن
+                    for (let j = 1; j < batch.length; j++) {
+                        try {
+                            await sock.sendMessage(chatId, { image: batch[j].buf });
+                            sent++;
+                            await sleep(200);
+                        } catch {}
+                    }
+                    await sleep(500); // pause between batches
+                }
+
                 react(sock, m, '✅');
                 await update(
-`✅ *تم إرسال ${sent}/${images.length} صورة*
+`✅ *تم إرسال ${sent}/${buffers.length} صورة*
 
 🔍 ابحث مجدداً أو:
 🔙 *رجوع* | 🏠 *الرئيسية*
@@ -2458,9 +2583,9 @@ async function execute({ sock, msg }) {
                 try {
                     const msgKey = { id: ctx2.stanzaId, participant: ctx2.participant, remoteJid: chatId };
                     if (text === 'تثبيت') {
-                        await sock.groupMessagePin(chatId, msgKey, 1, 604800);
+                        await pinMessage(sock, chatId, msgKey.id, msgKey.participant, true);
                     } else {
-                        await sock.groupMessagePin(chatId, msgKey, 0);
+                        await pinMessage(sock, chatId, msgKey.id, msgKey.participant, false);
                     }
                     react(sock, m, '📌');
                 } catch (e) {
@@ -2790,13 +2915,19 @@ ${lines}
     async function handleDownload(url, audioOnly, m) {
         const platform = detectPlatform(url) || 'رابط';
         const icon     = audioOnly ? '🎵' : '🎬';
-        react(sock, m, '⏳');
-        await update(`${icon} *جاري تحميل ${platform}...*\nقد ياخذ بضع ثوانٍ.`);
 
-        // ── Pinterest: scraper مباشر (صور فقط) ──
-        if (!audioOnly && (url.includes('pinterest.com') || url.includes('pin.it'))) {
+        // ── حد 3 تنزيلات متزامنة ──
+        if (_dlActive >= DL_MAX_CONCURRENT) {
             react(sock, m, '⏳');
-            await update('📌 *جاري جلب صورة Pinterest...*');
+            await update(`⏳ *البوت مشغول بـ ${_dlActive} تنزيل*\nانتظر قليلاً وأعد المحاولة.\n\n🔙 *رجوع*`);
+            return;
+        }
+
+        react(sock, m, '⏳');
+        await update(`${icon} *جاري تحميل ${platform}...*\nقد يأخذ بضع ثوانٍ.`);
+
+        // ── Pinterest: scraper مباشر ──
+        if (!audioOnly && (url.includes('pinterest.com') || url.includes('pin.it'))) {
             try {
                 const imgUrl = await downloadPinterestImage(url);
                 if (imgUrl) {
@@ -2811,28 +2942,53 @@ ${lines}
             return;
         }
 
+        _dlActive++;
         try {
+            // ── يوتيوب: جرب savetube أولاً (أسرع) ثم yt-dlp ──
+            const isYT = url.includes('youtube.com') || url.includes('youtu.be');
+            if (isYT) {
+                react(sock, m, '⏳');
+                const stResult = await savetube.download(url, audioOnly ? 'audio' : 'video').catch(() => null);
+                if (stResult?.url) {
+                    try {
+                        const buf = await downloadImageBuffer(stResult.url); // reuse: downloads any URL to buffer
+                        if (audioOnly) {
+                            await sock.sendMessage(chatId, {
+                                audio: buf, mimetype: 'audio/mpeg', ptt: false,
+                                fileName: `${stResult.title || 'audio'}.mp3`,
+                            }, { quoted: m });
+                        } else {
+                            await sock.sendMessage(chatId, {
+                                video: buf,
+                                caption: `🎬 ${stResult.title || platform}`,
+                            }, { quoted: m });
+                        }
+                        react(sock, m, '✅');
+                        await update(`✅ *تم التحميل!*\n\n🔙 *رجوع*`);
+                        return;
+                    } catch { /* fallthrough to yt-dlp */ }
+                }
+            }
+
+            // ── yt-dlp للبقية أو كـ fallback ──
             const { filePath, ext, cleanup } = await ytdlpDownload(url, { audio: audioOnly });
             const fileSize = fs.statSync(filePath).size;
             const isVideo  = ['mp4','mkv','webm','mov','avi'].includes(ext);
             const isAudio  = ['mp3','m4a','ogg','aac','opus','wav'].includes(ext);
             const isImage  = ['jpg','jpeg','png','webp','gif'].includes(ext);
 
-            // حد أقصى مطلق 150MB
             if (fileSize > 150 * 1024 * 1024) {
                 cleanup();
-                return update('❌ الملف أكبر من 150MB، لا يمكن إرساله.\n\n🔙 *رجوع*');
+                return update('❌ الملف أكبر من 150MB.\n\n🔙 *رجوع*');
             }
 
             const buffer = fs.readFileSync(filePath); cleanup();
 
-            // ✅ فيديو أكبر من 70MB → مستند بدل فيديو
             if (isVideo && fileSize > 70 * 1024 * 1024) {
                 await sock.sendMessage(chatId, {
-                    document: buffer,
-                    mimetype:  'video/mp4',
-                    fileName:  `${platform}_video.mp4`,
-                    caption:   `📎 ${platform} — تم إرساله كمستند (الحجم: ${(fileSize/1024/1024).toFixed(1)}MB)`,
+                    document: buffer, mimetype: 'video/mp4',
+                    fileName: `${platform}_video.mp4`,
+                    caption: `📎 ${platform} — ${(fileSize/1024/1024).toFixed(1)}MB`,
                 }, { quoted: m });
             } else if (isVideo) {
                 await sock.sendMessage(chatId, { video: buffer, caption: `${icon} ${platform}` }, { quoted: m });
@@ -2846,7 +3002,6 @@ ${lines}
                     fileName: path.basename(filePath), caption: `${icon} ${platform}`,
                 }, { quoted: m });
             }
-
             react(sock, m, '✅');
             await update(`✅ *تم التحميل!*\n\n🔙 *رجوع*`);
         } catch (e) {
@@ -2858,14 +3013,14 @@ ${lines}
             else if (errText.includes('معدل الطلبات') || errText.includes('429'))
                 hint = '\n⏳ حاول بعد دقيقتين.';
             else if (errText.includes('خاص') || errText.toLowerCase().includes('private') || errText.includes('login'))
-                hint = '\n🔒 المحتوى خاص أو يتطلب تسجيل دخول.';
+                hint = '\n🔒 المحتوى خاص.';
             else if (errText.includes('Unsupported URL') || errText.includes('not supported'))
                 hint = '\n🔗 الرابط غير مدعوم.';
-            else if (errText.includes('محذوف') || errText.includes('unavailable') || errText.includes('not available'))
-                hint = '\n🗑️ المحتوى محذوف أو غير متاح.';
-            else if (errText.includes('filesize') || errText.includes('large'))
-                hint = '\n📦 جرّب الصوت بدل الفيديو.';
+            else if (errText.includes('محذوف') || errText.includes('unavailable'))
+                hint = '\n🗑️ المحتوى غير متاح.';
             await update(`❌ *فشل التحميل*\n${errText.slice(0, 120)}${hint}\n\n🔙 *رجوع*`);
+        } finally {
+            _dlActive--;
         }
     }
 
@@ -3010,14 +3165,33 @@ ${lines}
 
     async function showStats() {
         const s = readStats();
-        const topCmds  = Object.entries(s.commands||{}).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v],i)=>`${i+1}. ${k}: *${v}*`).join('\n') || 'لا يوجد';
-        const topUsers = Object.entries(s.users||{}).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v],i)=>{
-            // نعرض الـ JID بدون @ مثل النخبة
-            const display = k.endsWith('@s.whatsapp.net') ? normalizeJid(k) : k.split('@')[0];
-            return `${i+1}. @${display}: *${v}*`;
-        }).join('\n') || 'لا يوجد';
-        const mentions = Object.keys(s.users||{}).sort((a,b)=>(s.users[b]||0)-(s.users[a]||0)).slice(0,5)
-            .filter(k => k.endsWith('@s.whatsapp.net'));
+        const topCmds = Object.entries(s.commands||{})
+            .sort((a,b) => b[1]-a[1]).slice(0,5)
+            .map(([k,v],i) => `${i+1}. ${k}: *${v}*`).join('\n') || 'لا يوجد';
+
+        // ── تحويل LID إلى phone JID قبل العرض ──
+        const userEntries = Object.entries(s.users||{}).sort((a,b) => b[1]-a[1]).slice(0,5);
+        const resolvedUsers = [];
+        for (const [raw, count] of userEntries) {
+            let phoneJid = raw;
+            // لو مش phone JID (يعني LID أو مجهول) — حاول تحوّله
+            if (!raw.endsWith('@s.whatsapp.net')) {
+                try {
+                    // نبحث في آخر meta مخزّن
+                    const num = raw.split('@')[0].split(':')[0];
+                    phoneJid  = num + '@s.whatsapp.net';
+                } catch { phoneJid = raw; }
+            }
+            resolvedUsers.push({ jid: phoneJid, count });
+        }
+
+        const topUsers = resolvedUsers
+            .map((u, i) => `${i+1}. @${normalizeJid(u.jid)}: *${u.count}*`)
+            .join('\n') || 'لا يوجد';
+        const mentions = resolvedUsers
+            .map(u => u.jid)
+            .filter(j => j.endsWith('@s.whatsapp.net'));
+
         const up = process.uptime();
         const h = Math.floor(up/3600), mm = Math.floor((up%3600)/60), ss = Math.floor(up%60);
         await update({
