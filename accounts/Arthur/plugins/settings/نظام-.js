@@ -29,12 +29,29 @@ const execAsync   = promisify(exec);
 const __dirname   = path.dirname(fileURLToPath(import.meta.url));
 const BOT_DIR     = path.resolve(__dirname, '../../');
 const ROOT_DIR    = path.resolve(__dirname, '../../../../');
-const DATA_DIR    = path.join(BOT_DIR, 'nova', 'data');
-const PLUGINS_DIR = path.join(BOT_DIR, 'plugins');
-const PROT_FILE   = path.join(DATA_DIR, 'protection.json');
-const STATS_FILE  = path.join(DATA_DIR, 'sys_stats.json');
+const DATA_DIR          = path.join(BOT_DIR, 'nova', 'data');
+const PLUGINS_DIR       = path.join(BOT_DIR, 'plugins');
+const PROT_FILE         = path.join(DATA_DIR, 'protection.json');
+const STATS_FILE        = path.join(DATA_DIR, 'sys_stats.json');
+const PLUGINS_CFG_FILE  = path.join(DATA_DIR, 'plugins_config.json');
 
 fs.ensureDirSync(DATA_DIR);
+
+// ══════════════════════════════════════════════════════════════
+//  إصلاح 4: مسح مجلدات dl_ المؤقتة عند بدء التشغيل
+//  يضمن عدم تراكم الملفات لو أُغلق البوت أثناء التحميل
+// ══════════════════════════════════════════════════════════════
+(async () => {
+    try {
+        const tmpDir = os.tmpdir();
+        const entries = await fs.promises.readdir(tmpDir);
+        await Promise.all(
+            entries
+                .filter(e => e.startsWith('dl_'))
+                .map(e => fs.remove(path.join(tmpDir, e)).catch(() => {}))
+        );
+    } catch {}
+})();
 
 // ══════════════════════════════════════════════════════════════
 //  helpers
@@ -144,12 +161,24 @@ async function resolveTarget(sock, chatId, m) {
 // ══════════════════════════════════════════════════════════════
 //  file utils
 // ══════════════════════════════════════════════════════════════
-const readJSON  = (f, def = {}) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return def; } };
-const writeJSON = (f, d)        => { try { fs.writeFileSync(f, JSON.stringify(d, null, 2), 'utf8'); } catch {} };
+// ── I/O helpers — async لتجنب إيقاف الـ Event Loop ──
+const readJSON  = async (f, def = {}) => {
+    try { return JSON.parse(await fs.promises.readFile(f, 'utf8')); }
+    catch { return def; }
+};
+const writeJSON = async (f, d) => {
+    try { await fs.promises.writeFile(f, JSON.stringify(d, null, 2), 'utf8'); }
+    catch {}
+};
+// sync فقط حيث يُستدعى خارج async context (مثل setInterval init)
+const readJSONSync  = (f, def = {}) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return def; } };
+const writeJSONSync = (f, d)        => { try { fs.writeFileSync(f, JSON.stringify(d, null, 2), 'utf8'); } catch {} };
 
+
+// ── protection cache — sync للقراءة الأولى فقط (in-memory بعدها) ──
 let _protCache = null;
 const readProt = () => {
-    if (!_protCache) _protCache = readJSON(PROT_FILE, {
+    if (!_protCache) _protCache = readJSONSync(PROT_FILE, {
         antiCrash:    'off',
         antiLink:     'off',
         antiDelete:   'off',
@@ -164,23 +193,22 @@ const readProt = () => {
     });
     return _protCache;
 };
+// ← كتابة async لتجنب إيقاف Event Loop
 const writeProt = d => { _protCache = d; writeJSON(PROT_FILE, d); };
 
-// ── stats مع in-memory cache — يكتب للـ disk كل 60 ثانية فقط ──
+// ── stats cache — كتابة للـ disk كل 60 ثانية فقط ──
 let _statsCache   = null;
 let _statsDirty   = false;
 const readStats  = () => {
-    if (!_statsCache) _statsCache = readJSON(STATS_FILE, { commands:{}, users:{}, total:0 });
+    if (!_statsCache) _statsCache = readJSONSync(STATS_FILE, { commands:{}, users:{}, total:0 });
     return _statsCache;
 };
-const writeStats = d => {
-    _statsCache = d;
-    _statsDirty = true;
-    // flush فوري لو كان طلب مسح
-};
+const writeStats = d => { _statsCache = d; _statsDirty = true; };
+// flush async كل دقيقة من setInterval
 const flushStats = () => {
     if (_statsDirty && _statsCache) { writeJSON(STATS_FILE, _statsCache); _statsDirty = false; }
 };
+
 
 const grpFile = (prefix, chatId) =>
     path.join(DATA_DIR, prefix + '_' + chatId.replace(/[^\w]/g, '_') + '.json');
@@ -188,8 +216,39 @@ const grpFile = (prefix, chatId) =>
 // ── cache لـ getPluginInfo — بدل قراءة disk عند كل رسالة ──
 const _pluginInfoCache = new Map(); // key: filePath, value: { mtime, info }
 
-
 // ══════════════════════════════════════════════════════════════
+//  إصلاح 1: plugins_config.json — فصل الإعدادات عن الكود
+//  البنية: { "cmdName": { elite, lock, group, prv } }
+//  البوت يقرأ الإعدادات من الملف ويطبقها، لا يعدّل الكود المصدري
+// ══════════════════════════════════════════════════════════════
+let _pluginsCfg = null;
+
+function loadPluginsCfg() {
+    if (!_pluginsCfg) _pluginsCfg = readJSONSync(PLUGINS_CFG_FILE, {});
+    return _pluginsCfg;
+}
+
+function savePluginsCfg() {
+    writeJSON(PLUGINS_CFG_FILE, _pluginsCfg || {});
+}
+
+// قراءة إعداد مُدمج: الـ config file يُقدَّم على قيمة الكود
+function getPluginCfgField(cmd, key, codeDefault) {
+    const cfg = loadPluginsCfg();
+    const entry = cfg[cmd];
+    if (!entry || !(key in entry)) return codeDefault;
+    return entry[key];
+}
+
+// حفظ إعداد في plugins_config.json بدل تعديل الكود
+function setPluginCfgField(cmd, key, value) {
+    const cfg = loadPluginsCfg();
+    if (!cfg[cmd]) cfg[cmd] = {};
+    cfg[cmd][key] = value;
+    savePluginsCfg();
+}
+
+
 //  plugin utils
 // ══════════════════════════════════════════════════════════════
 
@@ -223,26 +282,32 @@ const _origLoadPlugins = loadPlugins;
 global._invalidatePluginCache = () => { _fileListCache = null; _pluginInfoCache.clear(); };
 
 
-function getPluginInfo(filePath) {
+async function getPluginInfo(filePath) {
     try {
         const mtime = fs.statSync(filePath).mtimeMs;
         const cached = _pluginInfoCache.get(filePath);
         if (cached && cached.mtime === mtime) return cached.info;
-        const code = fs.readFileSync(filePath, 'utf8');
+        const code = await fs.promises.readFile(filePath, 'utf8');
         let cmd;
         const arr = code.match(/command:\s*\[([^\]]+)\]/);
         if (arr) {
-            const cmds = arr[1].match(/['"`]([^'"`]+)['"`]/g);
-            cmd = cmds ? cmds[0].replace(/['"`]/g, '') : path.basename(filePath, '.js');
+            const cmds = arr[1].match(/[`'"]([^`'"]+)[`'"]/g);
+            cmd = cmds ? cmds[0].replace(/[`'"]/g, '') : path.basename(filePath, '.js');
         } else {
-            cmd = code.match(/command:\s*['"`]([^'"`]+)['"`]/)?.[1] || path.basename(filePath, '.js');
+            cmd = code.match(/command:\s*[`'"]([^`'"]+)[`'"]/)?.[1] || path.basename(filePath, '.js');
         }
+        // قيم الكود الأصلية
+        const codeElite = code.match(/elite:\s*[`'"](on|off)[`'"]/i)?.[1]  || 'off';
+        const codeLock  = code.match(/lock:\s*[`'"](on|off)[`'"]/i)?.[1]   || 'off';
+        const codeGroup = (code.match(/group:\s*(true|false)/i)?.[1]        || 'false') === 'true';
+        const codePrv   = (code.match(/prv:\s*(true|false)/i)?.[1]          || 'false') === 'true';
+        // ← plugins_config.json تُقدَّم على قيم الكود
         const info = {
             cmd,
-            elite: code.match(/elite:\s*['"`](on|off)['"`]/i)?.[1]  || 'off',
-            lock:  code.match(/lock:\s*['"`](on|off)['"`]/i)?.[1]   || 'off',
-            group: (code.match(/group:\s*(true|false)/i)?.[1]        || 'false') === 'true',
-            prv:   (code.match(/prv:\s*(true|false)/i)?.[1]          || 'false') === 'true',
+            elite:    getPluginCfgField(cmd, 'elite', codeElite),
+            lock:     getPluginCfgField(cmd, 'lock',  codeLock),
+            group:    getPluginCfgField(cmd, 'group', codeGroup),
+            prv:      getPluginCfgField(cmd, 'prv',   codePrv),
             filePath,
         };
         _pluginInfoCache.set(filePath, { mtime, info });
@@ -252,24 +317,35 @@ function getPluginInfo(filePath) {
     }
 }
 
-function updatePluginField(filePath, key, value) {
-    // ✅ تعقيم القيمة — يمنع كسر الكود عبر أحرف خاصة
+async function updatePluginField(filePath, key, value) {
+    // ✅ إصلاح 1: الإعدادات تُحفظ في plugins_config.json — لا تعديل للكود المصدري
     const safeVal = String(value).replace(/[`\\]/g, '').replace(/'/g, '').trim();
-    let code = fs.readFileSync(filePath, 'utf8');
-    if (key === 'elite' || key === 'lock') {
-        code = code.replace(new RegExp(`(${key}:\\s*['"\`])(on|off)(['"\`])`, 'i'), `$1${safeVal}$3`);
-    } else if (key === 'group' || key === 'prv') {
-        code = code.replace(new RegExp(`(${key}:\\s*)(true|false)`, 'i'), `$1${safeVal}`);
-    } else if (key === 'command') {
-        code = code.replace(/command:\s*[`'"][^`'"]+[`'"]/, `command: '${safeVal}'`);
+    const info    = getPluginInfo(filePath);
+    const cmd     = info.cmd;
+
+    if (key === 'command') {
+        // تغيير الاسم: يحتاج تعديل الكود (مرة واحدة فقط) + تحديث الكونفيج
+        let code = await fs.promises.readFile(filePath, 'utf8');
+        const blockMatch = code.match(/(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*\{([^}]*?command[^}]*?)\}/s);
+        if (blockMatch) {
+            const bs = code.indexOf(blockMatch[0]);
+            let block = blockMatch[0];
+            block = block.replace(/command:\s*[`'"][^`'"]+[`'"]/, `command: '${safeVal}'`);
+            code = code.slice(0, bs) + block + code.slice(bs + blockMatch[0].length);
+        } else {
+            code = code.replace(/command:\s*[`'"][^`'"]+[`'"]/, `command: '${safeVal}'`);
+        }
+        await fs.promises.writeFile(filePath, code, 'utf8');
+    } else {
+        // elite / lock / group / prv → plugins_config.json فقط، الكود لا يُمسّ
+        const convert = v => (key === 'group' || key === 'prv') ? v === 'true' || v === true : v;
+        setPluginCfgField(cmd, key, convert(safeVal));
     }
-    fs.writeFileSync(filePath, code, 'utf8');
-    // أبطل كاش الملف المعدَّل
+
     _pluginInfoCache.delete(filePath);
     _fileListCache = null;
-    _cmdSearchCache.delete(value); // old name
+    for (const [k, v] of _cmdSearchCache) { if (v === filePath) { _cmdSearchCache.delete(k); break; } }
 }
-
 // ── findPluginByCmd مع cache ──
 const _cmdSearchCache = new Map();
 
@@ -281,7 +357,7 @@ async function findPluginByCmd(cmdName) {
     }
     for (const f of getAllPluginFilesCached()) {
         try {
-            const code = fs.readFileSync(f, 'utf8');
+            const code = await fs.promises.readFile(f, 'utf8');
             if (new RegExp(`command:\\s*['"\`]${cmdName}['"\`]`, 'i').test(code) ||
                 new RegExp(`command:\\s*\\[[^\\]]*['"\`]${cmdName}['"\`]`, 'i').test(code)) {
                 _cmdSearchCache.set(cmdName, f);
@@ -292,8 +368,8 @@ async function findPluginByCmd(cmdName) {
     return null;
 }
 
-function quickLint(filePath) {
-    const code = fs.readFileSync(filePath, 'utf8');
+async function quickLint(filePath) {
+    const code    = await fs.promises.readFile(filePath, 'utf8');
     const issues  = [];
     const opens   = (code.match(/\{/g) || []).length;
     const closes  = (code.match(/\}/g) || []).length;
@@ -306,17 +382,22 @@ function quickLint(filePath) {
 async function checkPluginSyntax(filePath) {
     const tmpCheck = path.join(os.tmpdir(), `_check_${Date.now()}.mjs`);
     try {
-        fs.copyFileSync(filePath, tmpCheck);
+        await fs.promises.copyFile(filePath, tmpCheck);
         await execAsync(`node --input-type=module --check "${tmpCheck}"`);
-        try { fs.unlinkSync(tmpCheck); } catch {}
+        await fs.promises.unlink(tmpCheck).catch(() => {});
         return { ok: true };
     } catch (e) {
-        try { fs.unlinkSync(tmpCheck); } catch {}
+        await fs.promises.unlink(tmpCheck).catch(() => {});
         const errMsg = (e.stderr || e.message || '').trim();
         const lineMatch = errMsg.match(/:(\d+)$/m);
         const line = lineMatch ? parseInt(lineMatch[1]) : null;
         let codeLine = '';
-        if (line) { try { codeLine = fs.readFileSync(filePath, 'utf8').split('\n')[line-1]?.trim() || ''; } catch {} }
+        if (line) {
+            try {
+                const src = await fs.promises.readFile(filePath, 'utf8');
+                codeLine = src.split('\n')[line-1]?.trim() || '';
+            } catch {}
+        }
         return { ok: false, error: errMsg, line, codeLine };
     }
 }
@@ -431,8 +512,10 @@ const CRASH_PATTERNS = [
 const INSULT_WORDS = ['كس','طيز','شرموط','عاهر','زب','كسمك','عرص','منيوك','قحبة'];
 
 // ✅ FIX-3: regex للروابط شامل يغطي جميع أشكالها
-const _LINK_RE = /(?:https?:\/\/|www\.)\S+|(?<![a-zA-Z0-9])(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+(?:com|net|org|io|me|app|gg|ly|to|co|tv|ai|dev|xyz|info|online|site|link|live|store|shop|cc|ru|uk|de|fr|sa|ae|eg|iq|sy|jo|kw|bh|qa|om|ye|ma|dz|tn|lb|ps|ws|tk|ml|id|in|pk|ng|gh|ke)\b[^\s]*/i;
-const hasLink = text => _LINK_RE.test(text || '');
+// ── _LINK_RE آمن من ReDoS: لا تداخل في quantifiers ──
+// يكتشف: http/https روابط + روابط wa.me + نطاقات شائعة
+const _LINK_RE = /https?:\/\/[^\s<>"]{4,}|www\.[a-z0-9][\w.-]{1,63}\.[a-z]{2,}[^\s]*/i;
+const hasLink  = text => _LINK_RE.test(text || '');
 
 // ✅ FIX-3: استخراج كل النصوص الممكنة من الرسالة (نص + كابشن)
 function getAllMsgText(msg) {
@@ -583,7 +666,7 @@ async function protectionHandler(sock, msg) {
 
             try {
                 await sock.sendMessage(chatId, { text: warnText }, { quoted: msg });
-                await sleep(600);
+                await sleep(2000); // ← 2 ثانية لضمان وصول الرسالة قبل الحظر
             } catch {}
 
             // حظر مع fallback (مضاد-الخاص.js يجرب 'block' ثم true)
@@ -615,20 +698,25 @@ async function protectionHandler(sock, msg) {
             }
         }
 
-        // ── ✅ FIX-3: antiLink — يحذف فوراً لأي رابط ──
+        // ── antiLink — حذف + تحذير 3 مرات ثم طرد ──
         if (prot.antiLink === 'on' && isGroup && hasLink(text)) {
             if (!msg.key.fromMe) {
                 const senderRaw = msg.key.participant || '';
-                const isAdmin   = await isGroupAdmin(sock, chatId, senderRaw);
+                const { isAdmin } = await getGroupAdminInfo(sock, chatId, senderRaw);
                 if (!isAdmin) {
-                    // حذف الرسالة فوراً دون انتظار فحص الأدمن
-                    try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
-
+                    try {
+                        await sock.sendMessage(chatId, { delete: msg.key });
+                    } catch (e) {
+                        await sock.sendMessage(chatId, {
+                            text: `⚠️ @${normalizeJid(senderRaw)} ممنوع نشر الروابط\n❌ البوت يحتاج صلاحيات مشرف للحذف`,
+                            mentions: [senderRaw],
+                        }).catch(() => {});
+                        return;
+                    }
                     if (!prot.linkWarns)           prot.linkWarns = {};
                     if (!prot.linkWarns[chatId])   prot.linkWarns[chatId] = {};
                     prot.linkWarns[chatId][senderRaw] = (prot.linkWarns[chatId][senderRaw] || 0) + 1;
                     const w = prot.linkWarns[chatId][senderRaw];
-
                     if (w >= 3) {
                         prot.linkWarns[chatId][senderRaw] = 0;
                         writeProt(prot);
@@ -647,6 +735,7 @@ async function protectionHandler(sock, msg) {
                 }
             }
         }
+
 
         // ── antiInsult ──
         if (prot.antiInsult === 'on') {
@@ -1299,7 +1388,7 @@ async function slashCommandHandler(sock, msg) {
                 const isAudio  = ['mp3','m4a','ogg','aac','opus','wav'].includes(ext);
                 const isImage  = ['jpg','jpeg','png','webp','gif'].includes(ext);
                 if (fileSize > 150 * 1024 * 1024) { cleanup(); return upd('❌ الملف أكبر من 150MB.'); }
-                const buffer = fs.readFileSync(filePath); cleanup();
+                const buffer = await fs.promises.readFile(filePath); cleanup();
                 if (isVideo && fileSize > 70 * 1024 * 1024) {
                     await sock.sendMessage(chatId, {
                         document: buffer, mimetype: 'video/mp4',
@@ -1576,79 +1665,84 @@ global.featureHandlers.push(protectionHandler, statsAutoHandler, antiDeleteHandl
 // ══════════════════════════════════════════════════════════════
 //  تنزيلات — Download Queue (حد أقصى 3 متزامنة)
 // ══════════════════════════════════════════════════════════════
-const DL_MAX_CONCURRENT = 3;
+const DL_MAX_CONCURRENT = 3;          // حد عام: 3 تنزيلات في نفس الوقت
 let   _dlActive = 0;
+const _dlPerUser = new Set();          // حد لكل مستخدم: تنزيل واحد في نفس الوقت
 
 
 // ══════════════════════════════════════════════════════════════
-//  savetube API — تحميل يوتيوب بدون yt-dlp (أسرع وأموثق)
 // ══════════════════════════════════════════════════════════════
-const savetube = {
-    base: 'https://media.savetube.me/api',
-    headers: {
-        'accept': '*/*',
-        'content-type': 'application/json',
-        'origin': 'https://yt.savetube.me',
-        'referer': 'https://yt.savetube.me/',
-        'user-agent': 'Postify/1.0.0',
+//  Cobalt API — أفضل downloader مفتوح المصدر
+//  يدعم: يوتيوب / تيك توك / انستقرام / تويتر / فيسبوك / ساوندكلاود وغيرها
+//  الـ instance المجاني: https://api.cobalt.tools
+// ══════════════════════════════════════════════════════════════
+const COBALT_API = 'https://api.cobalt.tools';
+
+const cobalt = {
+    // الـ headers المطلوبة من Cobalt
+    _headers: {
+        'Accept':         'application/json',
+        'Content-Type':   'application/json',
     },
-    extractId(url) {
-        const p = [
-            /youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/,
-            /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
-            /youtu\.be\/([a-zA-Z0-9_-]{11})/,
-        ];
-        for (const r of p) { const m = url.match(r); if (m) return m[1]; }
-        return null;
-    },
-    async req(endpoint, data = {}, method = 'post') {
+
+    // ── الاستعلام الرئيسي ──
+    async fetch(url, audioOnly = false, quality = '720') {
         try {
-            const fullUrl = endpoint.startsWith('http') ? endpoint : this.base + endpoint;
-            const opts    = { method, headers: this.headers };
-            if (method === 'post') opts.body = JSON.stringify(data);
-            const resp = await fetch(fullUrl, opts);
-            if (!resp.ok) return { ok: false };
-            return { ok: true, data: await resp.json() };
-        } catch { return { ok: false }; }
+            const body = {
+                url,
+                videoQuality:     quality,
+                audioFormat:      'mp3',
+                audioBitrate:     '128',
+                downloadMode:     audioOnly ? 'audio' : 'auto',
+                youtubeVideoCodec: 'h264',
+                filenameStyle:    'basic',
+                disableMetadata:  true,
+                twitterGif:       false,
+            };
+
+            const resp = await fetch(`${COBALT_API}/`, {
+                method:  'POST',
+                headers: this._headers,
+                body:    JSON.stringify(body),
+                signal:  AbortSignal.timeout(25_000),
+            });
+
+            if (!resp.ok) {
+                console.error('[cobalt] HTTP', resp.status);
+                return null;
+            }
+
+            const data = await resp.json();
+            // status: 'stream' | 'redirect' | 'picker' | 'error' | 'rate-limit'
+            if (data.status === 'error' || data.status === 'rate-limit') {
+                console.warn('[cobalt]', data.status, data.error?.code);
+                return null;
+            }
+
+            // stream / redirect → رابط مباشر
+            if (data.url) return { url: data.url, type: data.status };
+
+            // picker → أكثر من نتيجة (مثل انستقرام carousel)
+            if (data.picker?.length) return { url: data.picker[0].url, type: 'picker', picker: data.picker };
+
+            return null;
+        } catch (e) {
+            console.error('[cobalt] fetch error:', e.message);
+            return null;
+        }
     },
-    async decrypt(enc) {
-        const key      = Buffer.from('C5D58EF67A7584E4A29F6C35BBC4EB12', 'hex');
-        const raw      = Buffer.from(enc, 'base64');
-        const iv       = raw.slice(0, 16);
-        const content  = raw.slice(16);
-        const decipher = crypto.createDecipheriv('aes-128-cbc', key, iv);
-        const dec      = Buffer.concat([decipher.update(content), decipher.final()]);
-        return JSON.parse(dec.toString());
-    },
-    async getCDN() {
-        const r = await this.req('/random-cdn', {}, 'get');
-        return r.ok ? r.data?.cdn : null;
-    },
-    async download(url, type = 'audio') {
-        const id  = this.extractId(url);
-        if (!id) return null;
-        const cdn = await this.getCDN();
-        if (!cdn) return null;
-        const info = await this.req(`https://${cdn}/v2/info`, { url: `https://www.youtube.com/watch?v=${id}` });
-        if (!info.ok) return null;
-        const dec  = await this.decrypt(info.data.data).catch(() => null);
-        if (!dec) return null;
-        const dl   = await this.req(`https://${cdn}/download`, {
-            id,
-            downloadType: type,
-            quality: type === 'audio' ? 'mp3' : '720',
-            key: dec.key,
-        });
-        const link = dl.data?.data?.downloadUrl;
-        if (!link) return null;
-        return { url: link, title: dec.title || '' };
+
+    // ── تنزيل مباشر إلى buffer بعد الحصول على رابط cobalt ──
+    async download(url, audioOnly = false) {
+        const result = await this.fetch(url, audioOnly);
+        if (!result?.url) return null;
+        return result;
     },
 };
 
 
 // ══════════════════════════════════════════════════════════════
-//  savefrom API — يوتيوب + انستقرام بدون yt-dlp
-//  يُستخدم كـ fallback ثانٍ بعد savetube
+//  savefrom API — انستقرام فقط
 // ══════════════════════════════════════════════════════════════
 const savefrom = {
     _headers: {
@@ -1658,12 +1752,10 @@ const savefrom = {
         'Origin':      'https://en.savefrom.net',
         'Accept-Language': 'en-US,en;q=0.9',
     },
-
     async getInfo(url) {
         try {
             const encoded = encodeURIComponent(url);
-            const apiUrl  = 'https://worker.sf-tools.com/savefrom?url=' + encoded;
-            const resp    = await fetch(apiUrl, {
+            const resp    = await fetch('https://worker.sf-tools.com/savefrom?url=' + encoded, {
                 headers: this._headers,
                 signal:  AbortSignal.timeout(15_000),
             });
@@ -1671,23 +1763,6 @@ const savefrom = {
             return await resp.json();
         } catch { return null; }
     },
-
-    async youtube(url, audioOnly = false) {
-        const data = await this.getInfo(url);
-        if (!data?.url?.length) return null;
-        if (audioOnly) {
-            const audio = data.url.find(u =>
-                u.ext === 'mp3' || u.ext === 'm4a' || (u.type || '').includes('audio')
-            );
-            return audio?.url ? { url: audio.url, title: data.meta?.title || '', ext: audio.ext || 'mp3' } : null;
-        }
-        const videos = data.url
-            .filter(u => (u.ext === 'mp4' || (u.type || '').includes('video')) && u.url)
-            .sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
-        const chosen = videos.find(u => parseInt(u.quality) <= 720) || videos[0];
-        return chosen?.url ? { url: chosen.url, title: data.meta?.title || '', ext: 'mp4', quality: chosen.quality } : null;
-    },
-
     async instagram(url) {
         const data = await this.getInfo(url);
         if (!data?.url?.length) return null;
@@ -1699,13 +1774,11 @@ const savefrom = {
 };
 
 // ══════════════════════════════════════════════════════════════
-//  tikwm API — تيك توك بدون yt-dlp (الأموثق والأسرع)
-//  tikwm.com API مجاني ولا يحتاج مفتاح
+//  tikwm API — تيك توك بدون yt-dlp
 // ══════════════════════════════════════════════════════════════
 const tikwm = {
     async download(url) {
         try {
-            // تنظيف الـ URL (vt.tiktok → full url)
             const cleanUrl = url.split('?')[0];
             const resp = await fetch('https://www.tikwm.com/api/', {
                 method: 'POST',
@@ -1713,13 +1786,7 @@ const tikwm = {
                     'Content-Type': 'application/x-www-form-urlencoded',
                     'User-Agent':   'Mozilla/5.0',
                 },
-                body: new URLSearchParams({
-                    url:   cleanUrl,
-                    count: '12',
-                    cursor: '0',
-                    web: '1',
-                    hd: '1',
-                }),
+                body: new URLSearchParams({ url: cleanUrl, count: '12', cursor: '0', web: '1', hd: '1' }),
                 signal: AbortSignal.timeout(20_000),
             });
             if (!resp.ok) return null;
@@ -1727,15 +1794,11 @@ const tikwm = {
             if (!json?.data) return null;
             const d = json.data;
             return {
-                // فيديو HD (بدون watermark)
-                videoHD:  d.hdplay || d.play || null,
-                // فيديو عادي (بدون watermark)
-                video:    d.play   || null,
-                // صوت فقط
-                audio:    d.music  || null,
-                title:    d.title  || '',
-                author:   d.author?.nickname || '',
-                duration: d.duration || 0,
+                videoHD: d.hdplay || d.play || null,
+                video:   d.play   || null,
+                audio:   d.music  || null,
+                title:   d.title  || '',
+                author:  d.author?.nickname || '',
             };
         } catch { return null; }
     },
@@ -2350,7 +2413,7 @@ async function execute({ sock, msg }) {
                 const cmdName = text.slice(4).trim();
                 const fp = await findPluginByCmd(cmdName);
                 if (!fp) return update(`❌ ما وجدت: ${cmdName}`);
-                try { await sock.sendMessage(chatId, { document: fs.readFileSync(fp), mimetype: 'application/javascript', fileName: path.basename(fp) }); }
+                try { await sock.sendMessage(chatId, { document: await fs.promises.readFile(fp), mimetype: 'application/javascript', fileName: path.basename(fp) }); }
                 catch (e) { await update(`❌ ${e?.message}`); }
                 return;
             }
@@ -2384,7 +2447,7 @@ async function execute({ sock, msg }) {
             const fp = tmp.targetFile, tc = tmp.targetCmd;
             if (!fp) return;
             if (text === 'كود') {
-                try { await sock.sendMessage(chatId, { document: fs.readFileSync(fp), mimetype: 'application/javascript', fileName: path.basename(fp) }); }
+                try { await sock.sendMessage(chatId, { document: await fs.promises.readFile(fp), mimetype: 'application/javascript', fileName: path.basename(fp) }); }
                 catch (e) { await update(`❌ ${e?.message}`); }
                 return;
             }
@@ -2423,7 +2486,7 @@ async function execute({ sock, msg }) {
             const targetPath = path.join(PLUGINS_DIR, 'tools', `${tmp.newPluginName}.js`);
             try {
                 fs.ensureDirSync(path.dirname(targetPath));
-                fs.writeFileSync(targetPath, text, 'utf8');
+                await fs.promises.writeFile(targetPath, text, 'utf8');
                 await loadPlugins().catch(()=>{});
                 react(sock, m, '✅');
                 await update(`✅ تم إنشاء [ ${tmp.newPluginName} ]`);
@@ -3042,8 +3105,16 @@ ${lines}
     async function handleDownload(url, audioOnly, m) {
         const platform = detectPlatform(url) || 'رابط';
         const icon     = audioOnly ? '🎵' : '🎬';
+        const userKey  = msg?.key?.participant || chatId;
 
-        // ── حد 3 تنزيلات متزامنة ──
+        // ── حد لكل مستخدم: تنزيل واحد في نفس الوقت ──
+        if (_dlPerUser.has(userKey)) {
+            react(sock, m, '⏳');
+            await update(`⏳ *طلبك السابق لم ينتهِ بعد*\nانتظر حتى ينتهي ثم أعد المحاولة.\n\n🔙 *رجوع*`);
+            return;
+        }
+
+        // ── حد عام: 3 تنزيلات متزامنة ──
         if (_dlActive >= DL_MAX_CONCURRENT) {
             react(sock, m, '⏳');
             await update(`⏳ *البوت مشغول بـ ${_dlActive} تنزيل*\nانتظر قليلاً وأعد المحاولة.\n\n🔙 *رجوع*`);
@@ -3070,112 +3141,91 @@ ${lines}
         }
 
         _dlActive++;
+        _dlPerUser.add(userKey);
         try {
-            const isYT  = url.includes('youtube.com') || url.includes('youtu.be');
-            const isIG  = url.includes('instagram.com') || url.includes('instagr.am');
+            const isYT = url.includes('youtube.com') || url.includes('youtu.be');
+            const isIG = url.includes('instagram.com') || url.includes('instagr.am');
+            const isTT = url.includes('tiktok.com') || url.includes('vt.tiktok') || url.includes('vm.tiktok');
 
-            // ══════════════════════════════════════════
-            // يوتيوب: savetube → savefrom → yt-dlp
-            // ══════════════════════════════════════════
+            // ══════════════════════════════════════
+            // يوتيوب: Cobalt → yt-dlp
+            // ══════════════════════════════════════
             if (isYT) {
-                // 1) savetube
-                const stResult = await savetube.download(url, audioOnly ? 'audio' : 'video').catch(() => null);
-                if (stResult?.url) {
+                const cobaltResult = await cobalt.download(url, audioOnly).catch(() => null);
+                if (cobaltResult?.url) {
                     try {
-                        const buf = await downloadImageBuffer(stResult.url);
+                        const buf = await downloadImageBuffer(cobaltResult.url);
                         if (audioOnly) {
                             await sock.sendMessage(chatId, {
                                 audio: buf, mimetype: 'audio/mpeg', ptt: false,
-                                fileName: `${stResult.title || 'audio'}.mp3`,
                             }, { quoted: m });
                         } else {
-                            await sock.sendMessage(chatId, {
-                                video: buf,
-                                caption: `🎬 ${stResult.title || platform}`,
-                            }, { quoted: m });
+                            const sz = buf.length;
+                            if (sz > 70 * 1024 * 1024) {
+                                await sock.sendMessage(chatId, {
+                                    document: buf, mimetype: 'video/mp4',
+                                    fileName: `youtube_video.mp4`,
+                                    caption: `📎 يوتيوب — ${(sz/1024/1024).toFixed(1)}MB`,
+                                }, { quoted: m });
+                            } else {
+                                await sock.sendMessage(chatId, {
+                                    video: buf, caption: `🎬 يوتيوب`,
+                                }, { quoted: m });
+                            }
                         }
                         react(sock, m, '✅');
-                        await update(`✅ *تم التحميل!* (savetube)\n\n🔙 *رجوع*`);
-                        return;
-                    } catch { /* fallthrough */ }
-                }
-                // 2) savefrom
-                const sfResult = await savefrom.youtube(url, audioOnly).catch(() => null);
-                if (sfResult?.url) {
-                    try {
-                        const buf = await downloadImageBuffer(sfResult.url);
-                        if (audioOnly) {
-                            await sock.sendMessage(chatId, {
-                                audio: buf, mimetype: 'audio/mpeg', ptt: false,
-                                fileName: `${sfResult.title || 'audio'}.${sfResult.ext || 'mp3'}`,
-                            }, { quoted: m });
-                        } else {
-                            await sock.sendMessage(chatId, {
-                                video: buf,
-                                caption: `🎬 ${sfResult.title || platform}${sfResult.quality ? ' · ' + sfResult.quality + 'p' : ''}`,
-                            }, { quoted: m });
-                        }
-                        react(sock, m, '✅');
-                        await update(`✅ *تم التحميل!* (savefrom)\n\n🔙 *رجوع*`);
+                        await update(`✅ *تم التحميل!*\n\n🔙 *رجوع*`);
                         return;
                     } catch { /* fallthrough to yt-dlp */ }
                 }
-                // 3) yt-dlp fallback
             }
 
-            // ══════════════════════════════════════════
+            // ══════════════════════════════════════
             // انستقرام: savefrom → yt-dlp
-            // ══════════════════════════════════════════
+            // ══════════════════════════════════════
             if (isIG && !audioOnly) {
                 const sfResult = await savefrom.instagram(url).catch(() => null);
                 if (sfResult?.url) {
                     try {
                         const buf = await downloadImageBuffer(sfResult.url);
                         await sock.sendMessage(chatId, {
-                            video: buf,
-                            caption: `📸 ${sfResult.title || 'Instagram'}`,
+                            video: buf, caption: `📸 انستقرام`,
                         }, { quoted: m });
                         react(sock, m, '✅');
-                        await update(`✅ *تم التحميل!* (savefrom)\n\n🔙 *رجوع*`);
+                        await update(`✅ *تم التحميل!*\n\n🔙 *رجوع*`);
                         return;
                     } catch { /* fallthrough to yt-dlp */ }
                 }
             }
 
-            // ══════════════════════════════════════════
+            // ══════════════════════════════════════
             // تيك توك: tikwm → yt-dlp
-            // ══════════════════════════════════════════
-            const isTT = url.includes('tiktok.com') || url.includes('vt.tiktok') || url.includes('vm.tiktok');
+            // ══════════════════════════════════════
             if (isTT) {
                 const ttResult = await tikwm.download(url).catch(() => null);
-                const ttUrl    = audioOnly
-                    ? ttResult?.audio
-                    : (ttResult?.videoHD || ttResult?.video);
+                const ttUrl = audioOnly ? ttResult?.audio : (ttResult?.videoHD || ttResult?.video);
                 if (ttUrl) {
                     try {
                         const buf = await downloadImageBuffer(ttUrl);
                         if (audioOnly) {
                             await sock.sendMessage(chatId, {
-                                audio:    buf,
-                                mimetype: 'audio/mpeg',
-                                ptt:      false,
+                                audio: buf, mimetype: 'audio/mpeg', ptt: false,
                                 fileName: `${ttResult.title || 'tiktok'}.mp3`,
                             }, { quoted: m });
                         } else {
                             await sock.sendMessage(chatId, {
-                                video:   buf,
+                                video: buf,
                                 caption: `🎵 ${ttResult.author ? '@' + ttResult.author + ' — ' : ''}${ttResult.title || 'TikTok'}`,
                             }, { quoted: m });
                         }
                         react(sock, m, '✅');
-                        await update(`✅ *تم التحميل!* (tikwm)\n\n🔙 *رجوع*`);
+                        await update(`✅ *تم التحميل!*\n\n🔙 *رجوع*`);
                         return;
                     } catch { /* fallthrough to yt-dlp */ }
                 }
             }
 
-            // ── yt-dlp: باقي المنصات (فيسبوك / تويتر) أو fallback ──
-            const { filePath, ext, cleanup } = await ytdlpDownload(url, { audio: audioOnly });
+            // ── yt-dlp: باقي المنصات أو fallback ──
             const fileSize = fs.statSync(filePath).size;
             const isVideo  = ['mp4','mkv','webm','mov','avi'].includes(ext);
             const isAudio  = ['mp3','m4a','ogg','aac','opus','wav'].includes(ext);
@@ -3186,7 +3236,7 @@ ${lines}
                 return update('❌ الملف أكبر من 150MB.\n\n🔙 *رجوع*');
             }
 
-            const buffer = fs.readFileSync(filePath); cleanup();
+            const buffer = await fs.promises.readFile(filePath); cleanup();
 
             if (isVideo && fileSize > 70 * 1024 * 1024) {
                 await sock.sendMessage(chatId, {
@@ -3225,6 +3275,7 @@ ${lines}
             await update(`❌ *فشل التحميل*\n${errText.slice(0, 120)}${hint}\n\n🔙 *رجوع*`);
         } finally {
             _dlActive--;
+            _dlPerUser.delete(userKey);
         }
     }
 
