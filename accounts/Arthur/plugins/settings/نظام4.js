@@ -4,10 +4,10 @@
 //  + slash handler /امر مباشر
 //
 //  الإصلاحات:
-//  ✅ antiPrivate  — حظر صحيح بـ JID مُنظَّف + cooldown محكم
-//  ✅ فيديو >70MB  — يُبعَث مستنداً بدل رفضه
-//  ✅ antiLink     — يرصد الروابط في النصوص والكابشنات كلها
-//  ✅ antiDelete   — يعرض النوع + المحتوى + منشن من حذف
+//  ☑️ antiPrivate  — حظر صحيح بـ JID مُنظَّف + cooldown محكم
+//  ☑️ فيديو >70MB  — يُبعَث مستنداً بدل رفضه
+//  ☑️ antiLink     — يرصد الروابط في النصوص والكابشنات كلها
+//  ☑️ antiDelete   — يعرض النوع + المحتوى + منشن من حذف
 // ══════════════════════════════════════════════════════════════
 import fs            from 'fs-extra';
 import path          from 'path';
@@ -38,6 +38,7 @@ const PLUGINS_DIR       = path.join(BOT_DIR, 'plugins');
 const PROT_FILE         = path.join(DATA_DIR, 'protection.json');
 const STATS_FILE        = path.join(DATA_DIR, 'sys_stats.json');
 const PLUGINS_CFG_FILE  = path.join(DATA_DIR, 'plugins_config.json');
+const BAN_FILE          = path.join(DATA_DIR, 'banned_users.json');
 
 fs.ensureDirSync(DATA_DIR);
 
@@ -106,19 +107,24 @@ async function pinMessage(sock, chatId, stanzaId, participant, pin = true) {
 const react = (sock, msg, e) =>
     sock.sendMessage(msg.key.remoteJid, { react: { text: e, key: msg.key } }).catch(() => {});
 
+// ── تفاعلات موحّدة: 🕒 انتظار | ☑️ نجاح | ✖️ فشل ──
+const reactWait    = (sock, msg) => react(sock, msg, '🕒');
+const reactOk      = (sock, msg) => react(sock, msg, '☑️');
+const reactFail    = (sock, msg) => react(sock, msg, '✖️');
+
 const INPUT_REACT_MAP = {
-    'رجوع':         '🔙', 'نعم':          '✅', 'لا':           '❌',
+    'رجوع':         '🔙', 'نعم':          '☑️', 'لا':           '❌',
     'نخبة':         '👑', 'بلاجنز':       '🧩', 'تنزيلات':      '⬇️',
     'إحصاءات':      '📊', 'احصاءات':      '📊', 'حماية':        '🛡️',
     'اوامر':        '🔧', 'إدارة':        '🛠️', 'اضافة':        '➕',
     'حذف':          '🗑️', 'عرض':          '👀', 'مسح الكل':     '🧹',
     'مسح':          '🗑️', 'تثبيت':        '📌', 'الغاء تثبيت':  '📌',
-    'قفل':          '🔒', 'فتح':          '🔓', 'رفع مشرف':     '👑',
+    'قفل':          '🔒', 'فتح':          '🔓', 'رفع مشرف':     '⬆️',
     'تنزيل مشرف':   '⬇️', 'طرد':          '🚪', 'حظر':          '🔨',
-    'كتم':          '🔇', 'الغاء كتم':    '🔊', 'الغاء حظر':    '✅',
+    'كتم':          '🔇', 'الغاء كتم':    '🔊', 'الغاء حظر':    '☑️',
     'رابط':         '🔗', 'تحديث':        '🔄', 'فيديو':        '🎬',
     'صوت':          '🎵', 'معلومات':      'ℹ️', 'اذاعة':        '📢',
-    'انضم':         '✅', 'خروج':         '🚪', 'ضبط':          '⚙️',
+    'انضم':         '☑️', 'خروج':         '🚪', 'ضبط':          '⚙️',
     'تغيير الاسم':  '✏️', 'كود':          '💻', 'الرئيسية':     '🏠',
 };
 
@@ -386,7 +392,7 @@ async function checkPluginSyntax(filePath) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  ✅ FIX-4: messageCache مُحسَّن — يحفظ النوع + المحتوى لكل رسالة
+//  ☑️ FIX-4: messageCache مُحسَّن — يحفظ النوع + المحتوى لكل رسالة
 // ══════════════════════════════════════════════════════════════
 const messageCache = new Map();
 const _deleteKey   = Symbol('deleteRegistered');
@@ -538,13 +544,13 @@ const CRASH_PATTERNS = [
 
 const INSULT_WORDS = ['كس','طيز','شرموط','عاهر','زب','كسمك','عرص','منيوك','قحبة'];
 
-// ✅ FIX-3: regex للروابط شامل يغطي جميع أشكالها
+// ☑️ FIX-3: regex للروابط شامل يغطي جميع أشكالها
 // ── _LINK_RE: https/www + روابط wa.me / t.me / chat.whatsapp.com ──
 // يكتشف: http/https روابط + روابط wa.me + نطاقات شائعة
 const _LINK_RE = /(https?:\/\/|\bwww\.)[^\s<>"]{4,}|\b(wa\.me|t\.me|chat\.whatsapp\.com)\/[^\s]+/i;
 const hasLink  = text => _LINK_RE.test(text || '');
 
-// ✅ FIX-3: استخراج كل النصوص الممكنة من الرسالة (نص + كابشن)
+// ☑️ FIX-3: استخراج كل النصوص الممكنة من الرسالة (نص + كابشن)
 function getAllMsgText(msg) {
     const m = msg?.message;
     if (!m) return '';
@@ -560,7 +566,7 @@ function getAllMsgText(msg) {
     );
 }
 
-// ✅ دالة موحدة — تجلب groupMetadata مرة واحدة فقط لكل رسالة
+// ☑️ دالة موحدة — تجلب groupMetadata مرة واحدة فقط لكل رسالة
 // بدل isGroupAdmin() + isBotGroupAdmin() = طلبان منفصلان
 const _metaCache = new Map(); // chatId → { meta, ts }
 const META_TTL   = 30_000;   // 30 ثانية
@@ -664,7 +670,7 @@ async function protectionHandler(sock, msg) {
         const chatId  = msg.key.remoteJid;
         const isGroup = chatId.endsWith('@g.us');
 
-        // ✅ FIX-4: اكتشاف الحذف عبر protocolMessage أيضاً (belt & suspenders)
+        // ☑️ FIX-4: اكتشاف الحذف عبر protocolMessage أيضاً (belt & suspenders)
         if (msg.message?.protocolMessage?.type === 0) {
             const deletedKey = msg.message.protocolMessage.key;
             if (deletedKey && prot.antiDelete === 'on' && !msg.key.fromMe) {
@@ -673,7 +679,7 @@ async function protectionHandler(sock, msg) {
             return;
         }
 
-        // ✅ FIX-3: استخراج النص من كل أنواع الرسائل
+        // ☑️ FIX-3: استخراج النص من كل أنواع الرسائل
         const text = getAllMsgText(msg);
 
         // ── antiPrivate — مبني على مضاد-الخاص.js ──
@@ -823,7 +829,7 @@ async function protectionHandler(sock, msg) {
 protectionHandler._src = 'protection_system';
 
 // ══════════════════════════════════════════════════════════════
-//  ✅ FIX-4: antiDeleteHandler — يعرض النوع + المحتوى + منشن
+//  ☑️ FIX-4: antiDeleteHandler — يعرض النوع + المحتوى + منشن
 // ══════════════════════════════════════════════════════════════
 async function antiDeleteHandler(sock, keys) {
     try {
@@ -870,6 +876,7 @@ antiDeleteHandler._src = 'antiDelete_system';
 //  statsAutoHandler
 // ══════════════════════════════════════════════════════════════
 async function statsAutoHandler(sock, msg) {
+    if (msg._botBanned) return;  // مبند — تجاهل
     try {
         const pfx  = global._botConfig?.prefix || '.';
         const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
@@ -936,9 +943,9 @@ const SLASH_HELP =
 `✧━── ❝ 𝐒𝐋𝐀𝐒𝐇 𝐂𝐌𝐃𝐒 ❞ ──━✧
 
 *👥 الأعضاء:*
-\`/رفع\` \`/تنزيل\` \`/طرد\` \`/حظر\`
-\`/فك حظر\` \`/كتم [دقائق]\` \`/فك كتم\`
-\`/مشرفين\`
+\`/رفع\` \`/تنزيل\` \`/طرد\`
+\`/بان\` \`/فك بان\` \`/محظورين\`
+\`/كتم [دقائق]\` \`/فك كتم\` \`/مشرفين\`
 
 *💬 الرسائل:*
 \`/مسح\` \`/تثبيت\` \`/فك تثبيت\`
@@ -954,7 +961,7 @@ const SLASH_HELP =
 \`/قوانين [نص]\` \`/قوانين عرض\` \`/قوانين حذف\`
 \`/كلمات عرض\` \`/كلمات اضف [كلمة]\` \`/كلمات حذف [كلمة]\`
 
-*👑 النخبة:*
+*♦️ النخبة:*
 \`/نخبة اضف\` \`/نخبة ازل\` \`/نخبة عرض\` \`/نخبة مسح\`
 
 *🛡️ الحماية (toggle):*
@@ -982,6 +989,7 @@ const SLASH_HELP =
 const _slashPending = new Map();
 
 async function slashCommandHandler(sock, msg) {
+    if (msg._botBanned) return;  // مبند — تجاهل
     try {
         const raw = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
         const text = raw.trim();
@@ -1030,7 +1038,7 @@ async function slashCommandHandler(sock, msg) {
             } catch { return { isGroup: true, isAdmin: false, isBotAdmin: false, meta: null }; }
         };
 
-        const tryDo = async (fn, emoji = '✅') => {
+        const tryDo = async (fn, emoji = '☑️') => {
             try { await fn(); react(sock, msg, emoji); return true; }
             catch (e) {
                 const { isGroup: ig, isAdmin, isBotAdmin } = await getPerms();
@@ -1071,7 +1079,7 @@ async function slashCommandHandler(sock, msg) {
         if (cmd === 'رفع') {
             const target = await resolveSlashTarget();
             if (!target) return reply('↩️ منشن العضو أو رد على رسالته أو اكتب رقمه.');
-            await tryDo(() => sock.groupParticipantsUpdate(chatId, [target], 'promote'), '👑');
+            await tryDo(() => sock.groupParticipantsUpdate(chatId, [target], 'promote'), '⬆️');
             return;
         }
 
@@ -1108,8 +1116,40 @@ async function slashCommandHandler(sock, msg) {
             const tN2 = normalizeJid(target);
             const bf  = grpFile('bans', chatId);
             writeJSON(bf, readJSON(bf, []).filter(b => normalizeJid(b) !== tN2));
-            react(sock, msg, '✅');
-            await replyM('✅ تم رفع الحظر عن @' + tN2, [target]);
+            reactOk(sock, msg);
+            await replyM('☑️ تم رفع الحظر عن @' + tN2, [target]);
+            return;
+        }
+
+        // /بان — بان البوت
+        if (cmd === 'بان') {
+            const target = await resolveSlashTarget();
+            if (!target) return reply('↩️ منشن الشخص أو رد على رسالته أو اكتب رقمه.');
+            addBan(target);
+            reactOk(sock, msg);
+            await replyM('🚫 *تم إعطاء بان*\n@' + normalizeJid(target) + '\n_البوت سيتجاهل أوامره الآن_', [target]);
+            return;
+        }
+
+        // /فك بان
+        if (twoWord === 'فك بان') {
+            const target = await resolveSlashTarget();
+            if (!target) return reply('↩️ منشن الشخص أو رد على رسالته أو اكتب رقمه.');
+            removeBan(target);
+            reactOk(sock, msg);
+            await replyM('☑️ *تم إزالة البان*\n@' + normalizeJid(target) + '\n_يمكنه الآن استخدام البوت_', [target]);
+            return;
+        }
+
+        // /محظورين — عرض قائمة المبندين
+        if (cmd === 'محظورين') {
+            const banned = readBanned();
+            if (!banned.length) return reply('📭 لا يوجد أحد في القائمة السوداء.');
+            const list = banned.map((j, i) => (i+1) + '. @' + normalizeJid(j)).join('\n');
+            await replyM(
+                '🚫 *قائمة البان (' + banned.length + '):*\n\n' + list,
+                banned.filter(j => j.endsWith('@s.whatsapp.net'))
+            );
             return;
         }
 
@@ -1141,9 +1181,9 @@ async function slashCommandHandler(sock, msg) {
                 const admins = meta.participants.filter(p => p.admin);
                 if (!admins.length) return reply('📭 لا يوجد مشرفين.');
                 const list = admins.map((a, i) =>
-                    (i+1) + '. @' + normalizeJid(a.id) + (a.admin === 'superadmin' ? ' 👑' : '')
+                    (i+1) + '. @' + normalizeJid(a.id) + (a.admin === 'superadmin' ? ' 🔝' : '')
                 ).join('\n');
-                await replyM('👑 *المشرفون (' + admins.length + '):*\n\n' + list, admins.map(a => a.id));
+                await replyM('⬆️ *المشرفون (' + admins.length + '):*\n\n' + list, admins.map(a => a.id));
             } catch (e) { await reply('❌ ' + e?.message); }
             return;
         }
@@ -1164,12 +1204,12 @@ async function slashCommandHandler(sock, msg) {
         if (cmd === 'تثبيت') {
             const ctx = msg.message?.extendedTextMessage?.contextInfo;
             if (!ctx?.stanzaId) return reply('↩️ رد على الرسالة اللي تبي تثبتها.');
-            react(sock, msg, '⏳');
+            reactWait(sock, msg);
             try {
                 await pinMessage(sock, chatId, ctx.stanzaId, ctx.participant, true);
-                react(sock, msg, '📌');
+                reactOk(sock, msg);
             } catch (e) {
-                react(sock, msg, '❌');
+                reactFail(sock, msg);
                 await reply('❌ ' + (e?.message?.includes('admin') ? 'البوت يحتاج صلاحيات مشرف.' : (e?.message || 'فشل').slice(0,100)));
             }
             return;
@@ -1178,11 +1218,11 @@ async function slashCommandHandler(sock, msg) {
         if (twoWord === 'فك تثبيت') {
             const ctx = msg.message?.extendedTextMessage?.contextInfo;
             if (!ctx?.stanzaId) return reply('↩️ رد على الرسالة المثبتة.');
-            react(sock, msg, '⏳');
+            reactWait(sock, msg);
             try {
                 await pinMessage(sock, chatId, ctx.stanzaId, ctx.participant, false);
-                react(sock, msg, '📌');
-            } catch (e) { react(sock, msg, '❌'); await reply('❌ ' + (e?.message || '').slice(0,100)); }
+                reactOk(sock, msg);
+            } catch (e) { reactFail(sock, msg); await reply('❌ ' + (e?.message || '').slice(0,100)); }
             return;
         }
 
@@ -1210,9 +1250,9 @@ async function slashCommandHandler(sock, msg) {
         if (cmd === 'انضم' && rest) {
             const match = rest.match(/chat\.whatsapp\.com\/([0-9A-Za-z]{20,24})/i);
             if (!match) return reply('❌ رابط غير صحيح.\nمثال: /انضم https://chat.whatsapp.com/XXX');
-            react(sock, msg, '⏳');
-            try { await sock.groupAcceptInvite(match[1]); react(sock, msg, '✅'); await reply('✅ تم الانضمام.'); }
-            catch (e) { react(sock, msg, '❌'); await reply('❌ ' + e?.message); }
+            reactWait(sock, msg);
+            try { await sock.groupAcceptInvite(match[1]); reactOk(sock, msg); await reply('☑️ تم الانضمام.'); }
+            catch (e) { reactFail(sock, msg); await reply('❌ ' + e?.message); }
             return;
         }
 
@@ -1221,7 +1261,7 @@ async function slashCommandHandler(sock, msg) {
             const pk = 'leave_' + chatId;
             if (_slashPending.get(pk)) {
                 _slashPending.delete(pk);
-                try { await sock.groupLeave(chatId); react(sock, msg, '✅'); }
+                try { await sock.groupLeave(chatId); reactOk(sock, msg); }
                 catch (e) { await reply('❌ ' + e?.message); }
             } else {
                 _slashPending.set(pk, true);
@@ -1232,14 +1272,14 @@ async function slashCommandHandler(sock, msg) {
         }
 
         if (cmd === 'اسم' && rest) {
-            react(sock, msg, '⏳');
-            await tryDo(() => sock.groupUpdateSubject(chatId, rest), '✅');
+            reactWait(sock, msg);
+            await tryDo(() => sock.groupUpdateSubject(chatId, rest), '☑️');
             return;
         }
 
         if (cmd === 'وصف' && rest) {
-            react(sock, msg, '⏳');
-            await tryDo(() => sock.groupUpdateDescription(chatId, rest), '✅');
+            reactWait(sock, msg);
+            await tryDo(() => sock.groupUpdateDescription(chatId, rest), '☑️');
             return;
         }
 
@@ -1251,7 +1291,7 @@ async function slashCommandHandler(sock, msg) {
                     '📊 *معلومات المجموعة:*\n\n' +
                     '📌 *الاسم:* ' + meta.subject + '\n' +
                     '👥 *الأعضاء:* ' + meta.participants.length + '\n' +
-                    '👑 *المشرفون:* ' + meta.participants.filter(p => p.admin).length + '\n' +
+                    '🔝 *المشرفون:* ' + meta.participants.filter(p => p.admin).length + '\n' +
                     '🆔 *ID:* ' + chatId.split('@')[0] + '\n' +
                     '📅 *الإنشاء:* ' + new Date(meta.creation * 1000).toLocaleDateString('ar')
                 );
@@ -1270,14 +1310,14 @@ async function slashCommandHandler(sock, msg) {
                 return reply('📋 *رسالة الترحيب:*\n\n' + wt);
             }
             if (rest === 'حذف') {
-                try { fs.removeSync(wf); react(sock, msg, '🗑️'); await reply('✅ تم حذف رسالة الترحيب.'); }
+                try { fs.removeSync(wf); reactOk(sock, msg); await reply('☑️ تم حذف رسالة الترحيب.'); }
                 catch (e) { await reply('❌ ' + e?.message); }
                 return;
             }
             if (rest) {
                 writeJSON(wf, { text: rest });
-                react(sock, msg, '✅');
-                await reply('✅ تم حفظ رسالة الترحيب.\nاستخدم {name} للاسم و {number} للرقم.');
+                reactOk(sock, msg);
+                await reply('☑️ تم حفظ رسالة الترحيب.\nاستخدم {name} للاسم و {number} للرقم.');
                 return;
             }
             return reply('📖 الاستخدام:\n/ترحيب [نص]  — ضبط\n/ترحيب عرض  — عرض\n/ترحيب حذف  — حذف');
@@ -1291,14 +1331,14 @@ async function slashCommandHandler(sock, msg) {
                 return reply('📜 *قوانين المجموعة:*\n\n' + rt);
             }
             if (rest === 'حذف') {
-                try { fs.removeSync(rf); react(sock, msg, '🗑️'); await reply('✅ تم حذف القوانين.'); }
+                try { fs.removeSync(rf); reactOk(sock, msg); await reply('☑️ تم حذف القوانين.'); }
                 catch (e) { await reply('❌ ' + e?.message); }
                 return;
             }
             if (rest) {
                 writeJSON(rf, { text: rest });
-                react(sock, msg, '✅');
-                await reply('✅ تم حفظ القوانين.');
+                reactOk(sock, msg);
+                await reply('☑️ تم حفظ القوانين.');
                 return;
             }
             return reply('📖 الاستخدام:\n/قوانين [نص]  — ضبط\n/قوانين عرض  — عرض\n/قوانين حذف  — حذف');
@@ -1315,7 +1355,7 @@ async function slashCommandHandler(sock, msg) {
                     const elites = sock.getElites?.() || [];
                     if (!elites.length) return reply('📋 قائمة النخبة فارغة.');
                     const list = elites.map((id, i) => (i+1) + '. @' + normalizeJid(id)).join('\n');
-                    await replyM('👑 *قائمة النخبة (' + elites.length + '):*\n\n' + list, elites);
+                    await replyM('♦️ *قائمة النخبة (' + elites.length + '):*\n\n' + list, elites);
                 } catch (e) { await reply('❌ ' + e?.message); }
                 return;
             }
@@ -1324,7 +1364,7 @@ async function slashCommandHandler(sock, msg) {
                 const pk = 'elite_clear_' + senderRaw;
                 if (_slashPending.get(pk)) {
                     _slashPending.delete(pk);
-                    try { await sock.eliteReset?.({ sock }); react(sock, msg, '✅'); await reply('✅ تم مسح قائمة النخبة.'); }
+                    try { await sock.eliteReset?.({ sock }); reactOk(sock, msg); await reply('☑️ تم مسح قائمة النخبة.'); }
                     catch (e) { await reply('❌ ' + e?.message); }
                 } else {
                     _slashPending.set(pk, true);
@@ -1354,13 +1394,13 @@ async function slashCommandHandler(sock, msg) {
                     if (isAdd) {
                         const res = await sock.addElite({ sock, ids });
                         let out = '*إضافة النخبة*\n\n';
-                        if (res?.success?.length) out += '✅ ' + res.success.map(u => '@' + normalizeJid(u.id)).join(', ') + ' تمت الإضافة\n';
+                        if (res?.success?.length) out += '☑️ ' + res.success.map(u => '@' + normalizeJid(u.id)).join(', ') + ' تمت الإضافة\n';
                         if (res?.fail?.length)    out += '⚠️ ' + res.fail.map(u => '@' + normalizeJid(u.id) + ' (' + (u.error === 'exist_already' ? 'موجود مسبقاً' : u.error) + ')').join(', ');
                         await reply(out.trim());
                     } else {
                         const res = await sock.rmElite({ sock, ids });
                         let out = '*إزالة النخبة*\n\n';
-                        if (res?.success?.length) out += '✅ ' + res.success.map(u => '@' + normalizeJid(u.id)).join(', ') + ' تمت الإزالة\n';
+                        if (res?.success?.length) out += '☑️ ' + res.success.map(u => '@' + normalizeJid(u.id)).join(', ') + ' تمت الإزالة\n';
                         if (res?.fail?.length)    out += '⚠️ ' + res.fail.map(u => '@' + normalizeJid(u.id) + ' (' + (u.error === 'not_exist' ? 'ليس نخبة أصلاً' : u.error) + ')').join(', ');
                         await reply(out.trim());
                     }
@@ -1379,8 +1419,8 @@ async function slashCommandHandler(sock, msg) {
             const p = readProt();
             p[protKey] = p[protKey] === 'on' ? 'off' : 'on';
             writeProt(p);
-            react(sock, msg, p[protKey] === 'on' ? '✅' : '⛔');
-            await reply((p[protKey] === 'on' ? '✅ شُغِّل' : '⛔ أُوقف') + ': *' + (twoWord || cmd) + '*');
+            reactOk(sock, msg);
+            await reply((p[protKey] === 'on' ? '☑️ شُغِّل' : '⛔ أُوقف') + ': *' + (twoWord || cmd) + '*');
             return;
         }
 
@@ -1390,7 +1430,7 @@ async function slashCommandHandler(sock, msg) {
             const p = readProt();
             p[lockKey] = p[lockKey] === 'on' ? 'off' : 'on';
             writeProt(p);
-            react(sock, msg, p[lockKey] === 'on' ? '🔒' : '🔓');
+            reactOk(sock, msg);
             await reply((p[lockKey] === 'on' ? '🔒 شُغِّل' : '🔓 أُوقف') + ': *' + twoWord + '*');
             return;
         }
@@ -1408,7 +1448,7 @@ async function slashCommandHandler(sock, msg) {
             if (!url) return reply('📖 الاستخدام:\n/تحميل [رابط]\n/تحميل صوت [رابط]');
             const icon     = audioMode ? '🎵' : '🎬';
             const platform = detectPlatform(url) || 'رابط';
-            react(sock, msg, '⏳');
+            reactWait(sock, msg);
             const stMsg = await sock.sendMessage(chatId,
                 { text: icon + ' *جاري تحميل ' + platform + '...*' }, { quoted: msg });
             const upd = t => sock.sendMessage(chatId, { text: t, edit: stMsg.key }).catch(() => {});
@@ -1438,9 +1478,9 @@ async function slashCommandHandler(sock, msg) {
                         fileName: path.basename(filePath), caption: icon + ' ' + platform,
                     }, { quoted: msg });
                 }
-                react(sock, msg, '✅'); await upd('✅ *تم التحميل!*');
+                reactOk(sock, msg); await upd('☑️ *تم التحميل!*');
             } catch (e) {
-                react(sock, msg, '❌');
+                reactFail(sock, msg);
                 const em = e?.message || '';
                 let hint = '';
                 if (em.includes('غير مثبت') || em.includes('yt-dlp'))
@@ -1457,24 +1497,24 @@ async function slashCommandHandler(sock, msg) {
         }
 
         if (cmd === 'تحديث') {
-            react(sock, msg, '⏳');
-            try { await loadPlugins(); react(sock, msg, '✅'); await reply('✅ تم تحديث الاوامر.'); }
-            catch (e) { react(sock, msg, '❌'); await reply('❌ ' + e?.message); }
+            reactWait(sock, msg);
+            try { await loadPlugins(); reactOk(sock, msg); await reply('☑️ تم تحديث الاوامر.'); }
+            catch (e) { reactFail(sock, msg); await reply('❌ ' + e?.message); }
             return;
         }
 
         if (twoWord === 'مسح كاش') {
-            react(sock, msg, '⏳');
+            reactWait(sock, msg);
             try {
                 if (global._pluginsCache) global._pluginsCache = {};
                 await loadPlugins().catch(() => {});
-                react(sock, msg, '✅'); await reply('✅ تم مسح الكاش.');
-            } catch (e) { react(sock, msg, '❌'); await reply('❌ ' + e?.message); }
+                reactOk(sock, msg); await reply('☑️ تم مسح الكاش.');
+            } catch (e) { reactFail(sock, msg); await reply('❌ ' + e?.message); }
             return;
         }
 
         if (cmd === 'اذاعة' && rest) {
-            react(sock, msg, '⏳');
+            reactWait(sock, msg);
             try {
                 const chats = await sock.groupFetchAllParticipating();
                 let sent = 0;
@@ -1482,8 +1522,8 @@ async function slashCommandHandler(sock, msg) {
                     try { await sock.sendMessage(gid, { text: rest }); sent++; } catch {}
                     await sleep(500);
                 }
-                react(sock, msg, '✅');
-                await reply('✅ تم الارسال لـ ' + sent + ' مجموعة.');
+                reactOk(sock, msg);
+                await reply('☑️ تم الارسال لـ ' + sent + ' مجموعة.');
             } catch (e) { await reply('❌ ' + e?.message); }
             return;
         }
@@ -1510,15 +1550,15 @@ async function slashCommandHandler(sock, msg) {
             const newName = parts.slice(3).join(' ').trim();
             if (!oldName || !newName)
                 return reply('📖 الاستخدام:\n/تغيير اسم [الامر_الحالي] [الاسم_الجديد]');
-            react(sock, msg, '⏳');
+            reactWait(sock, msg);
             const fp = await findPluginByCmd(oldName);
             if (!fp) return reply('❌ ما وجدت أمر باسم: *' + oldName + '*');
             try {
                 updatePluginField(fp, 'command', newName);
                 await loadPlugins().catch(() => {});
-                react(sock, msg, '✅');
-                await reply('✅ تم تغيير: *' + oldName + '* ➔ *' + newName + '*');
-            } catch (e) { react(sock, msg, '❌'); await reply('❌ ' + e?.message); }
+                reactOk(sock, msg);
+                await reply('☑️ تم تغيير: *' + oldName + '* ➔ *' + newName + '*');
+            } catch (e) { reactFail(sock, msg); await reply('❌ ' + e?.message); }
             return;
         }
 
@@ -1529,24 +1569,24 @@ async function slashCommandHandler(sock, msg) {
         // /اسم بوت [الاسم الجديد]
         if (twoWord === 'اسم بوت') {
             if (!rest2) return reply('📖 الاستخدام: /اسم بوت [الاسم الجديد]');
-            react(sock, msg, '⏳');
+            reactWait(sock, msg);
             try {
                 await sock.updateProfileName(rest2.trim());
-                react(sock, msg, '✅');
-                await reply('✅ تم تغيير اسم البوت إلى: *' + rest2.trim() + '*');
-            } catch (e) { react(sock, msg, '❌'); await reply('❌ ' + e?.message); }
+                reactOk(sock, msg);
+                await reply('☑️ تم تغيير اسم البوت إلى: *' + rest2.trim() + '*');
+            } catch (e) { reactFail(sock, msg); await reply('❌ ' + e?.message); }
             return;
         }
 
         // /وصف بوت [النص]
         if (twoWord === 'وصف بوت') {
             if (!rest2) return reply('📖 الاستخدام: /وصف بوت [النص]');
-            react(sock, msg, '⏳');
+            reactWait(sock, msg);
             try {
                 await sock.updateProfileStatus(rest2.trim());
-                react(sock, msg, '✅');
-                await reply('✅ تم تغيير وصف البوت.');
-            } catch (e) { react(sock, msg, '❌'); await reply('❌ ' + e?.message); }
+                reactOk(sock, msg);
+                await reply('☑️ تم تغيير وصف البوت.');
+            } catch (e) { reactFail(sock, msg); await reply('❌ ' + e?.message); }
             return;
         }
 
@@ -1555,16 +1595,16 @@ async function slashCommandHandler(sock, msg) {
             const ctx2   = msg.message?.extendedTextMessage?.contextInfo;
             const imgMsg = msg.message?.imageMessage || ctx2?.quotedMessage?.imageMessage;
             if (!imgMsg) return reply('↩️ رد على صورة مع كتابة /صورة بوت');
-            react(sock, msg, '⏳');
+            reactWait(sock, msg);
             try {
                 const target2 = msg.message?.imageMessage
                     ? msg
                     : { message: ctx2.quotedMessage, key: { ...msg.key, id: ctx2.stanzaId, participant: ctx2.participant } };
                 const buf = await downloadMediaMessage(target2, 'buffer', {});
                 await sock.updateProfilePicture(getBotJid(sock), buf);
-                react(sock, msg, '✅');
-                await reply('✅ تم تغيير صورة البوت.');
-            } catch (e) { react(sock, msg, '❌'); await reply('❌ ' + e?.message); }
+                reactOk(sock, msg);
+                await reply('☑️ تم تغيير صورة البوت.');
+            } catch (e) { reactFail(sock, msg); await reply('❌ ' + e?.message); }
             return;
         }
 
@@ -1573,14 +1613,14 @@ async function slashCommandHandler(sock, msg) {
             const ctx2   = msg.message?.extendedTextMessage?.contextInfo;
             const imgMsg = msg.message?.imageMessage || ctx2?.quotedMessage?.imageMessage;
             if (!imgMsg) return reply('↩️ رد على صورة لتغيير صورة المجموعة.\nأو: /صورة بوت لتغيير صورة البوت.');
-            react(sock, msg, '⏳');
+            reactWait(sock, msg);
             try {
                 const target2 = msg.message?.imageMessage
                     ? msg
                     : { message: ctx2.quotedMessage, key: { ...msg.key, id: ctx2.stanzaId, participant: ctx2.participant } };
                 const buf = await downloadMediaMessage(target2, 'buffer', {});
-                await tryDo(() => sock.updateProfilePicture(chatId, buf), '✅');
-            } catch (e) { react(sock, msg, '❌'); await reply('❌ ' + e?.message); }
+                await tryDo(() => sock.updateProfilePicture(chatId, buf), '☑️');
+            } catch (e) { reactFail(sock, msg); await reply('❌ ' + e?.message); }
             return;
         }
 
@@ -1590,8 +1630,8 @@ async function slashCommandHandler(sock, msg) {
             if (!target) return reply('↩️ منشن الشخص أو اكتب رقمه.');
             try {
                 await sock.updateBlockStatus(target, 'block');
-                react(sock, msg, '🔒');
-                await reply('✅ تم حظر @' + normalizeJid(target));
+                reactOk(sock, msg);
+                await reply('☑️ تم حظر @' + normalizeJid(target));
             } catch (e) { await reply('❌ ' + e?.message); }
             return;
         }
@@ -1602,8 +1642,8 @@ async function slashCommandHandler(sock, msg) {
             if (!target) return reply('↩️ منشن الشخص أو اكتب رقمه.');
             try {
                 await sock.updateBlockStatus(target, 'unblock');
-                react(sock, msg, '🔓');
-                await reply('✅ تم فك الحظر عن @' + normalizeJid(target));
+                reactOk(sock, msg);
+                await reply('☑️ تم فك الحظر عن @' + normalizeJid(target));
             } catch (e) { await reply('❌ ' + e?.message); }
             return;
         }
@@ -1620,22 +1660,22 @@ async function slashCommandHandler(sock, msg) {
             if (rest.startsWith('اضف ') || rest.startsWith('اضافة ')) {
                 const w = rest.split(' ').slice(1).join(' ').trim().toLowerCase();
                 if (!w) return reply('↩️ اكتب الكلمة: /كلمات اضف [كلمة]');
-                if (!words.includes(w)) { words.push(w); writeJSON(bf, words); react(sock, msg, '✅'); }
-                return reply('✅ تمت الإضافة: ' + w);
+                if (!words.includes(w)) { words.push(w); writeJSON(bf, words); reactOk(sock, msg); }
+                return reply('☑️ تمت الإضافة: ' + w);
             }
             if (rest.startsWith('حذف ') || rest.startsWith('ازل ')) {
                 const w = rest.split(' ').slice(1).join(' ').trim().toLowerCase();
                 if (!w) return reply('↩️ اكتب الكلمة: /كلمات حذف [كلمة]');
                 writeJSON(bf, words.filter(x => x !== w));
-                react(sock, msg, '🗑️');
-                return reply('✅ تم الحذف: ' + w);
+                reactOk(sock, msg);
+                return reply('☑️ تم الحذف: ' + w);
             }
             return reply('📖 الاستخدام:\n/كلمات عرض\n/كلمات اضف [كلمة]\n/كلمات حذف [كلمة]');
         }
 
         // /مجموعاتي — إحصاءات المجموعات
         if (cmd === 'مجموعاتي') {
-            react(sock, msg, '⏳');
+            reactWait(sock, msg);
             try {
                 const allGroups = await sock.groupFetchAllParticipating();
                 const groups = Object.values(allGroups);
@@ -1686,12 +1726,29 @@ async function slashCommandHandler(sock, msg) {
 }
 slashCommandHandler._src = 'slash_system';
 
+// ══════════════════════════════════════════════════════════════
+//  bannedUsersHandler — middleware: تجاهل المبندين تماماً
+//  يعمل أول شيء قبل أي معالجة أخرى
+// ══════════════════════════════════════════════════════════════
+async function bannedUsersHandler(sock, msg) {
+    if (msg.key.fromMe) return;                          // البوت نفسه ← لا نتجاهله
+    const senderJid = msg.key.participant || msg.key.remoteJid;
+    if (!senderJid) return;
+    if (isBanned(senderJid)) {
+        // لا نرد، لا نعالج — صمت تام
+        // نضع علامة على الـ msg حتى تعرف باقي الـ handlers تتجاهله
+        msg._botBanned = true;
+    }
+}
+bannedUsersHandler._src = 'ban_middleware';
+
 // تسجيل الـ handlers
 if (!global.featureHandlers) global.featureHandlers = [];
 global.featureHandlers = global.featureHandlers.filter(
-    h => !['protection_system','stats_system','antiDelete_system','slash_system'].includes(h._src)
+    h => !['ban_middleware','protection_system','stats_system','antiDelete_system','slash_system'].includes(h._src)
 );
-global.featureHandlers.push(protectionHandler, statsAutoHandler, antiDeleteHandler, slashCommandHandler);
+// bannedUsersHandler يجب أن يكون الأول دائماً
+global.featureHandlers.push(bannedUsersHandler, protectionHandler, statsAutoHandler, antiDeleteHandler, slashCommandHandler);
 
 // ══════════════════════════════════════════════════════════════
 //  تنزيلات — Download Queue (حد أقصى 3 متزامنة)
@@ -2101,7 +2158,7 @@ function getVideoFormats(url) {
 }
 
 async function ytdlpDownload(url, opts = {}) {
-    // ✅ تنظيف الـ URL لمنع shell injection
+    // ☑️ تنظيف الـ URL لمنع shell injection
     if (!/^https?:\/\//i.test(url)) throw new Error('رابط غير صالح.');
     const safeUrl = url.replace(/[`$\\]/g, ''); // أزل أحرف shell الخطرة
 
@@ -2117,7 +2174,7 @@ async function ytdlpDownload(url, opts = {}) {
         ? ['--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36']
         : [];
 
-    // ✅ baseArgs كـ array — لا string concatenation — آمن من injection
+    // ☑️ baseArgs كـ array — لا string concatenation — آمن من injection
     const baseArgs = [
         '--no-playlist',
         '--no-warnings',
@@ -2136,7 +2193,7 @@ async function ytdlpDownload(url, opts = {}) {
 
     const cleanup = () => { try { fs.removeSync(outDir); } catch {} };
 
-    // ✅ دالة تشغيل آمنة بـ spawn بدل execAsync
+    // ☑️ دالة تشغيل آمنة بـ spawn بدل execAsync
     const runYtdlp = (extraArgs) => {
         return new Promise((resolve, reject) => {
             const allArgs = [...baseArgs, ...igArgs, ...extraArgs, safeUrl];
@@ -2210,7 +2267,7 @@ const MAIN_MENU =
 `✧━── ❝ 𝐍𝐎𝐕𝐀 𝐒𝐘𝐒𝐓𝐄𝐌 ❞ ──━✧
 
 ✦ *نخبة*
-\`👑 ادارة قائمة النخبة\`
+\`♦️ ادارة قائمة النخبة\`
 
 ✦ *بلاجنز*
 \`🧩 ادارة وعرض الاوامر\`
@@ -2340,8 +2397,8 @@ async function execute({ sock, msg }) {
         } catch { return { isGroup: true, isAdmin: false, isBotAdmin: false, meta: null }; }
     }
 
-    const tryAdminAction = async (fn, okEmoji = '✅') => {
-        try { await fn(); react(sock, msg, okEmoji); return true; }
+    const tryAdminAction = async (fn, emoji = '☑️') => {
+        try { await fn(); react(sock, m, emoji); return true; }
         catch (e) {
             const { isGroup, isAdmin, isBotAdmin } = await getAdminPerms();
             if (!isGroup)    { await update('❌ هذا الامر للمجموعات فقط.');    return false; }
@@ -2372,7 +2429,7 @@ async function execute({ sock, msg }) {
         // ── Rate limiting ──
         if (isRateLimited(newSender)) return;
 
-        // ✅ أوامر البريفكس المباشر /امر تتجاوز الجلسة — يعالجها slashCommandHandler
+        // ☑️ أوامر البريفكس المباشر /امر تتجاوز الجلسة — يعالجها slashCommandHandler
         if (text.startsWith('/')) return;
 
         // إعادة ضبط timeout عند كل تفاعل + تحديث lastActivity
@@ -2429,7 +2486,7 @@ async function execute({ sock, msg }) {
                     pushState('ELITE', showEliteMenu);
                     state = 'ELITE_VIEW';
                     return update({
-                        text: `✧━── ❝ 𝐍𝐗𝐁𝐀 ❞ ──━✧\n\n👑 *قائمة النخبة (${elites.length}):*\n\n${list}\n\n🔙 *رجوع*\n\n✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`,
+                        text: `✧━── ❝ 𝑬𝑳𝑰𝑻𝑬 ❞ ──━✧\n\n♦️ *قائمة النخبة (${elites.length}):*\n\n${list}\n\n🔙 *رجوع*\n\n✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`,
                         mentions: elites,
                     });
                 } catch { return update('❌ تعذر جلب القائمة.\n\n🔙 *رجوع*'); }
@@ -2464,7 +2521,7 @@ async function execute({ sock, msg }) {
             try {
                 const res = await sock.addElite({ sock, ids });
                 let msg2 = '*إضافة النخبة*\n\n';
-                if (res?.success?.length) msg2 += '✅ ' + res.success.map(u => `@${normalizeJid(u.id)}`).join(', ') + ' تمت الإضافة\n';
+                if (res?.success?.length) msg2 += '☑️ ' + res.success.map(u => `@${normalizeJid(u.id)}`).join(', ') + ' تمت الإضافة\n';
                 if (res?.fail?.length)    msg2 += '⚠️ ' + res.fail.map(u => `@${normalizeJid(u.id)} (${u.error==='exist_already'?'موجود مسبقاً':u.error})`).join(', ');
                 await update(msg2.trim());
             } catch (e) { await update(`❌ ${e?.message}`); }
@@ -2486,7 +2543,7 @@ async function execute({ sock, msg }) {
             try {
                 const res = await sock.rmElite({ sock, ids });
                 let msg2 = '*إزالة النخبة*\n\n';
-                if (res?.success?.length) msg2 += '✅ ' + res.success.map(u => `@${normalizeJid(u.id)}`).join(', ') + ' تمت الإزالة\n';
+                if (res?.success?.length) msg2 += '☑️ ' + res.success.map(u => `@${normalizeJid(u.id)}`).join(', ') + ' تمت الإزالة\n';
                 if (res?.fail?.length)    msg2 += '⚠️ ' + res.fail.map(u => `@${normalizeJid(u.id)} (${u.error==='not_exist'?'ليس نخبة أصلاً':u.error})`).join(', ');
                 await update(msg2.trim());
             } catch (e) { await update(`❌ ${e?.message}`); }
@@ -2496,7 +2553,7 @@ async function execute({ sock, msg }) {
         if (state === 'ELITE_CLEAR') {
             if (text === 'رجوع') { await goBack(); return; }
             if (text === 'نعم') {
-                try { await sock.eliteReset?.({ sock }); await update('✅ تم مسح الكل.'); }
+                try { await sock.eliteReset?.({ sock }); await update('☑️ تم مسح الكل.'); }
                 catch (e) { await update(`❌ ${e?.message}`); }
                 await sleep(1200); await showEliteMenu(); state = 'ELITE';
             }
@@ -2515,21 +2572,44 @@ async function execute({ sock, msg }) {
             return;
         }
 
+        // ── PLUGINS_PAGE — صفحات قائمة الأوامر ──
+        if (state === 'PLUGINS_PAGE') {
+            if (text === 'رجوع') { await goBack(); return; }
+            if (text === 'التالي' || text === 'التالي ▶️') {
+                if ((tmp.pluginPage || 0) < (tmp.pluginPages?.length || 1) - 1) {
+                    tmp.pluginPage++;
+                    await showPluginPage();
+                }
+                return;
+            }
+            if (text === 'السابق' || text === '◀️ السابق') {
+                if ((tmp.pluginPage || 0) > 0) {
+                    tmp.pluginPage--;
+                    await showPluginPage();
+                }
+                return;
+            }
+            return;
+        }
+
         if (state === 'PLUGINS_LIST') {
             if (text === 'رجوع') { await goBack(); return; }
             if (text === 'عرض الكل') {
+                // ── Pagination: 15 أمر لكل صفحة ──
                 const files = getAllPluginFiles();
-                let chunk = `✧━── ❝ 𝐏𝐋𝐔𝐆𝐈𝐍𝐒 ❞ ──━✧\n\n*الاوامر (${files.length}):*\n\n`, chunks = [];
-                for (const f of files) {
+                const PAGE_SIZE = 15;
+                tmp.pluginPages  = [];
+                const allLines   = files.map(f => {
                     const { cmd, elite, lock } = getPluginInfo(f);
-                    const line = `✦ ${cmd}${elite==='on'?' 👑':''}${lock==='on'?' 🔒':''}\n`;
-                    if ((chunk + line).length > 3500) { chunks.push(chunk); chunk = ''; }
-                    chunk += line;
+                    return `✦ ${cmd}${elite==='on'?' 👑':''}${lock==='on'?' 🔒':''}`;
+                });
+                for (let i = 0; i < allLines.length; i += PAGE_SIZE) {
+                    tmp.pluginPages.push(allLines.slice(i, i + PAGE_SIZE));
                 }
-                if (chunk) chunks.push(chunk);
-                for (const c of chunks) await sock.sendMessage(chatId, { text: c });
-                await update('🔙 *رجوع*');
-                return;
+                tmp.pluginPage = 0;
+                await showPluginPage();
+                pushState('PLUGINS_LIST', showPluginsListMenu);
+                state = 'PLUGINS_PAGE'; return;
             }
             if (text.startsWith('بحث ')) {
                 const cmdName = text.slice(4).trim();
@@ -2598,7 +2678,7 @@ async function execute({ sock, msg }) {
         if (state === 'PLUGIN_RENAME') {
             if (text === 'رجوع') { await goBack(); return; }
             try { updatePluginField(tmp.targetFile,'command',text.trim()); await loadPlugins().catch(()=>{}); } catch {}
-            await update(`✅ ${tmp.targetCmd} ➔ ${text.trim()}`);
+            await update(`☑️ ${tmp.targetCmd} ➔ ${text.trim()}`);
             tmp.targetCmd = text.trim(); await sleep(1200); await showPluginDetail(tmp.targetFile, tmp.targetCmd); state = 'PLUGIN_DETAIL'; return;
         }
 
@@ -2617,8 +2697,8 @@ async function execute({ sock, msg }) {
                 fs.ensureDirSync(path.dirname(targetPath));
                 await fs.promises.writeFile(targetPath, text, 'utf8');
                 await loadPlugins().catch(()=>{});
-                react(sock, m, '✅');
-                await update(`✅ تم إنشاء [ ${tmp.newPluginName} ]`);
+                reactOk(sock, m);
+                await update(`☑️ تم إنشاء [ ${tmp.newPluginName} ]`);
             } catch (e) { await update(`❌ ${e?.message}`); }
             await sleep(1000); await showPluginsMenu(); state = 'PLUGINS'; return;
         }
@@ -2657,7 +2737,7 @@ async function execute({ sock, msg }) {
             if (text === 'رجوع') { await goBack(); return; }
             const query = text.trim();
             if (!query || query.length < 1) return update('❌ اكتب كلمة بحث.');
-            react(sock, m, '⏳');
+            reactWait(sock, m);
             await update(`🔍 *جاري البحث عن "${query}" في Pinterest...*`);
             try {
                 const images = await searchPinterest(query, 10);
@@ -2698,16 +2778,16 @@ async function execute({ sock, msg }) {
                     await sleep(500); // pause between batches
                 }
 
-                react(sock, m, '✅');
+                reactOk(sock, m);
                 await update(
-`✅ *تم إرسال ${sent}/${buffers.length} صورة*
+`☑️ *تم إرسال ${sent}/${buffers.length} صورة*
 
 🔍 ابحث مجدداً أو:
 🔙 *رجوع* | 🏠 *الرئيسية*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
             } catch (e) {
-                react(sock, m, '❌');
+                reactFail(sock, m);
                 await update(`❌ فشل البحث: ${(e?.message || '').slice(0,100)}\n\n🔙 *رجوع*`);
             }
             return;
@@ -2726,7 +2806,7 @@ async function execute({ sock, msg }) {
         // ══════════════════════════════════════════════════
         if (state === 'STATS') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'مسح') { writeStats({ commands:{}, users:{}, total:0 }); _statsCache = null; await update('✅ تم المسح.'); await sleep(800); await showStats(); }
+            if (text === 'مسح') { writeStats({ commands:{}, users:{}, total:0 }); _statsCache = null; await update('☑️ تم المسح.'); await sleep(800); await showStats(); }
             return;
         }
 
@@ -2743,7 +2823,7 @@ async function execute({ sock, msg }) {
             const key = protMap[text];
             if (key) {
                 const p = readProt(); p[key] = p[key]==='on'?'off':'on'; writeProt(p);
-                react(sock, m, p[key]==='on'?'✅':'⛔');
+                reactOk(sock, m);
                 await sleep(800); await showProtMenu();
             }
             return;
@@ -2757,9 +2837,9 @@ async function execute({ sock, msg }) {
             if (text === 'تغيير اسم')  { pushState('CMDTOOLS', showCmdTools); await update('✏️ اكتب اسم الامر الحالي:\n\n🔙 *رجوع*'); state = 'RENAME_WAIT'; return; }
             if (text === 'فاحص الكود') { pushState('CMDTOOLS', showCmdTools); await update('🔍 اكتب اسم الامر:\n\n🔙 *رجوع*'); state = 'CODE_CHECK_WAIT'; return; }
             if (text === 'مسح كاش') {
-                react(sock, m, '⏳');
-                try { if (global._pluginsCache) global._pluginsCache = {}; await loadPlugins().catch(()=>{}); react(sock, m, '✅'); await update('✅ تم المسح.'); }
-                catch (e) { react(sock, m, '❌'); await update(`❌ ${e?.message}`); }
+                reactWait(sock, m);
+                try { if (global._pluginsCache) global._pluginsCache = {}; await loadPlugins().catch(()=>{}); reactOk(sock, m); await update('☑️ تم المسح.'); }
+                catch (e) { reactFail(sock, m); await update(`❌ ${e?.message}`); }
                 await sleep(800); await showCmdTools(); return;
             }
             return;
@@ -2770,14 +2850,14 @@ async function execute({ sock, msg }) {
             const fp = await findPluginByCmd(text);
             if (!fp) return update(`❌ ما وجدت: ${text}`);
             tmp.targetFile = fp; tmp.targetCmd = text;
-            await update(`✅ [ ${text} ] — اكتب الاسم الجديد:\n\n🔙 *رجوع*`);
+            await update(`☑️ [ ${text} ] — اكتب الاسم الجديد:\n\n🔙 *رجوع*`);
             pushState('RENAME_WAIT', showCmdTools); state = 'RENAME_NEW'; return;
         }
 
         if (state === 'RENAME_NEW') {
             if (text === 'رجوع') { await goBack(); return; }
             try { updatePluginField(tmp.targetFile,'command',text.trim()); await loadPlugins().catch(()=>{}); } catch {}
-            await update(`✅ ${tmp.targetCmd} ➔ ${text.trim()}`);
+            await update(`☑️ ${tmp.targetCmd} ➔ ${text.trim()}`);
             await sleep(1200); await showCmdTools(); state = 'CMDTOOLS'; return;
         }
 
@@ -2785,12 +2865,12 @@ async function execute({ sock, msg }) {
             if (text === 'رجوع') { await goBack(); return; }
             const fp = await findPluginByCmd(text);
             if (!fp) return update(`❌ ما وجدت: ${text}`);
-            react(sock, m, '⏳');
+            reactWait(sock, m);
             const lintIssues = quickLint(fp);
             const checkRes   = await checkPluginSyntax(fp);
             let report = `✧━── ❝ 𝐂𝐇𝐄𝐂𝐊 ❞ ──━✧\n\n*فحص [ ${text} ]*\n\n`;
             if (checkRes.ok && !lintIssues.length) {
-                report += '✅ *الكود سليم*\n';
+                report += '☑️ *الكود سليم*\n';
             } else {
                 report += '⚠️ *مشاكل:*\n';
                 if (!checkRes.ok) {
@@ -2802,7 +2882,7 @@ async function execute({ sock, msg }) {
                 lintIssues.forEach(i => { report += `🟡 ${i}\n`; });
             }
             report += '\n🔙 *رجوع*\n\n✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧';
-            react(sock, m, checkRes.ok && !lintIssues.length ? '✅' : '❌');
+            checkRes.ok && !lintIssues.length ? reactOk(sock, m) : reactFail(sock, m);
             await update(report);
             state = 'CMDTOOLS'; return;
         }
@@ -2829,8 +2909,8 @@ async function execute({ sock, msg }) {
                     const { meta } = await getAdminPerms();
                     const admins = (meta?.participants || []).filter(p => p.admin);
                     if (!admins.length) return update('📭 لا يوجد مشرفين.\n\n🔙 *رجوع*');
-                    const list = admins.map((a,i)=>`${i+1}. @${normalizeJid(a.id)} ${a.admin==='superadmin'?'👑':''}`).join('\n');
-                    await sock.sendMessage(chatId, { text: `👑 *المشرفون (${admins.length}):*\n\n${list}`, mentions: admins.map(a=>a.id) }, { quoted: m });
+                    const list = admins.map((a,i)=>`${i+1}. @${normalizeJid(a.id)} ${a.admin==='superadmin'?'🔝':''}`).join('\n');
+                    await sock.sendMessage(chatId, { text: `⬆️ *المشرفون (${admins.length}):*\n\n${list}`, mentions: admins.map(a=>a.id) }, { quoted: m });
                 } catch (e) { await update(`❌ ${e?.message}`); }
                 return;
             }
@@ -2854,35 +2934,33 @@ async function execute({ sock, msg }) {
             const target = await resolveTarget(sock, chatId, m);
             if (!target) return update('❌ منشن العضو او رد على رسالته.');
             const action = tmp.adminAction;
-            react(sock, m, '⏳');
+            reactWait(sock, m);
             if (action === 'promote') {
-                await tryAdminAction(() => sock.groupParticipantsUpdate(chatId, [target], 'promote'), '👑');
+                await tryAdminAction(() => sock.groupParticipantsUpdate(chatId, [target], 'promote'), '⬆️');
             } else if (action === 'demote') {
                 await tryAdminAction(() => sock.groupParticipantsUpdate(chatId, [target], 'demote'), '⬇️');
             } else if (action === 'remove') {
                 await tryAdminAction(() => sock.groupParticipantsUpdate(chatId, [target], 'remove'), '🚪');
-            } else if (action === 'ban') {
-                await tryAdminAction(async () => {
-                    // طرد من القروب + إضافة للقائمة السوداء
-                    await sock.groupParticipantsUpdate(chatId, [target], 'remove');
-                    const bans = readJSON(grpFile('bans', chatId), []);
-                    const tNum = normalizeJid(target);
-                    if (!bans.some(b => normalizeJid(b) === tNum)) {
-                        bans.push(target);
-                        writeJSON(grpFile('bans', chatId), bans);
-                    }
-                    await sock.sendMessage(chatId, {
-                        text: `⛔ تم حظر @${tNum} من المجموعة`,
-                        mentions: [target],
-                    });
-                }, '🔨');
-            } else if (action === 'unban') {
-                const tNum2 = normalizeJid(target);
-                const bans  = readJSON(grpFile('bans', chatId), []);
-                writeJSON(grpFile('bans', chatId), bans.filter(b => normalizeJid(b) !== tNum2));
-                react(sock, m, '✅');
+            } else if (action === 'botban') {
+                // ── بان البوت: يمنع الشخص من استخدام البوت (بدون طرد من القروب) ──
+                const tNum = normalizeJid(target);
+                addBan(target);
+                reactOk(sock, m);
                 await sock.sendMessage(chatId, {
-                    text: `✅ تم رفع الحظر عن @${tNum2}`,
+                    text: `🚫 *تم إعطاء بان للمستخدم*
+@${tNum}
+_البوت سيتجاهل أوامره الآن_`,
+                    mentions: [target],
+                });
+            } else if (action === 'botunban') {
+                // ── فك بان البوت ──
+                const tNum2 = normalizeJid(target);
+                removeBan(target);
+                reactOk(sock, m);
+                await sock.sendMessage(chatId, {
+                    text: `☑️ *تم إزالة البان*
+@${tNum2}
+_يمكن للمستخدم الآن استخدام البوت_`,
                     mentions: [target],
                 });
             } else if (action === 'mute') {
@@ -2904,7 +2982,7 @@ async function execute({ sock, msg }) {
             if (text === 'تثبيت' || text === 'الغاء التثبيت') {
                 const ctx2 = m.message?.extendedTextMessage?.contextInfo;
                 if (!ctx2?.stanzaId) return update('↩️ رد على الرسالة اللي تبيها.');
-                react(sock, m, '⏳');
+                reactWait(sock, m);
                 try {
                     const msgKey = { id: ctx2.stanzaId, participant: ctx2.participant, remoteJid: chatId };
                     if (text === 'تثبيت') {
@@ -2912,9 +2990,9 @@ async function execute({ sock, msg }) {
                     } else {
                         await pinMessage(sock, chatId, msgKey.id, msgKey.participant, false);
                     }
-                    react(sock, m, '📌');
+                    reactOk(sock, m);
                 } catch (e) {
-                    react(sock, m, '❌');
+                    reactFail(sock, m);
                     const em = e?.message || '';
                     await update(`❌ فشل: ${em.includes('admin') || em.includes('403') ? 'البوت يحتاج صلاحيات مشرف.' : em.slice(0, 100)}\n\n🔙 *رجوع*`);
                 }
@@ -2923,12 +3001,12 @@ async function execute({ sock, msg }) {
             if (text === 'مسح') {
                 const ctx2 = m.message?.extendedTextMessage?.contextInfo;
                 if (!ctx2?.stanzaId) return update('↩️ رد على الرسالة اللي تبيها.');
-                react(sock, m, '⏳');
+                reactWait(sock, m);
                 try {
                     await sock.sendMessage(chatId, { delete: { remoteJid: chatId, fromMe: false, id: ctx2.stanzaId, participant: ctx2.participant } });
-                    react(sock, m, '🗑️');
+                    reactOk(sock, m);
                 } catch (e) {
-                    react(sock, m, '❌');
+                    reactFail(sock, m);
                     await update(`❌ فشل: ${(e?.message || '').slice(0, 100)}\n\n🔙 *رجوع*`);
                 }
                 return;
@@ -2956,13 +3034,13 @@ async function execute({ sock, msg }) {
 
         if (state === 'ADMIN_SETNAME') {
             if (text === 'رجوع') { await goBack(); return; }
-            react(sock, m, '⏳'); await tryAdminAction(() => sock.groupUpdateSubject(chatId, text), '✅');
+            reactWait(sock, m); await tryAdminAction(() => sock.groupUpdateSubject(chatId, text), '☑️');
             await sleep(800); await showAdminGroupMenu(); state = 'ADMIN_GROUP_SET'; return;
         }
 
         if (state === 'ADMIN_SETDESC') {
             if (text === 'رجوع') { await goBack(); return; }
-            react(sock, m, '⏳'); await tryAdminAction(() => sock.groupUpdateDescription(chatId, text), '✅');
+            reactWait(sock, m); await tryAdminAction(() => sock.groupUpdateDescription(chatId, text), '☑️');
             await sleep(800); await showAdminGroupMenu(); state = 'ADMIN_GROUP_SET'; return;
         }
 
@@ -2971,14 +3049,14 @@ async function execute({ sock, msg }) {
             const ctx2   = m.message?.extendedTextMessage?.contextInfo;
             const imgMsg = m.message?.imageMessage || ctx2?.quotedMessage?.imageMessage;
             if (!imgMsg) return update('🖼️ ارسل او اقتبس صورة فقط.\n\n🔙 *رجوع*');
-            react(sock, m, '⏳');
+            reactWait(sock, m);
             try {
                 const target2 = m.message?.imageMessage
                     ? m
                     : { message: ctx2.quotedMessage, key: { ...m.key, id: ctx2.stanzaId, participant: ctx2.participant } };
                 const buf = await downloadMediaMessage(target2, 'buffer', {});
-                await tryAdminAction(() => sock.updateProfilePicture(chatId, buf), '✅');
-            } catch (e) { react(sock, m, '❌'); await update(`❌ ${e?.message}`); }
+                await tryAdminAction(() => sock.updateProfilePicture(chatId, buf), '☑️');
+            } catch (e) { reactFail(sock, m); await update(`❌ ${e?.message}`); }
             await sleep(800); await showAdminGroupMenu(); state = 'ADMIN_GROUP_SET'; return;
         }
 
@@ -2986,9 +3064,9 @@ async function execute({ sock, msg }) {
             if (text === 'رجوع') { await goBack(); return; }
             const match = text.match(/chat\.whatsapp\.com\/([0-9A-Za-z]{20,24})/i);
             if (!match) return update('❌ رابط غير صحيح.\n\n🔙 *رجوع*');
-            react(sock, m, '⏳');
-            try { await sock.groupAcceptInvite(match[1]); react(sock, m, '✅'); await update('✅ تم الانضمام.'); }
-            catch (e) { react(sock, m, '❌'); await update(`❌ ${e?.message}`); }
+            reactWait(sock, m);
+            try { await sock.groupAcceptInvite(match[1]); reactOk(sock, m); await update('☑️ تم الانضمام.'); }
+            catch (e) { reactFail(sock, m); await update(`❌ ${e?.message}`); }
             await sleep(800); await showAdminGroupMenu(); state = 'ADMIN_GROUP_SET'; return;
         }
 
@@ -3024,35 +3102,35 @@ async function execute({ sock, msg }) {
         if (state === 'ADMIN_SETWELCOME') {
             if (text === 'رجوع') { await goBack(); return; }
             writeJSON(grpFile('welcome', chatId), { text });
-            react(sock, m, '✅');
-            await update(`✅ تم حفظ رسالة الترحيب.\n\n🔙 *رجوع*`);
+            reactOk(sock, m);
+            await update(`☑️ تم حفظ رسالة الترحيب.\n\n🔙 *رجوع*`);
             await sleep(800); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; return;
         }
 
         if (state === 'ADMIN_SETRULES') {
             if (text === 'رجوع') { await goBack(); return; }
             writeJSON(grpFile('rules', chatId), { text });
-            react(sock, m, '✅');
+            reactOk(sock, m);
             await sleep(800); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; return;
         }
 
         if (state === 'ADMIN_WELCOME_VIEW') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'حذف') { try { fs.removeSync(grpFile('welcome', chatId)); react(sock, m, '🗑️'); } catch {} await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
+            if (text === 'حذف') { try { fs.removeSync(grpFile('welcome', chatId)); reactOk(sock, m); } catch {} await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
             return;
         }
 
         if (state === 'ADMIN_RULES_VIEW') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'حذف') { try { fs.removeSync(grpFile('rules', chatId)); react(sock, m, '🗑️'); } catch {} await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
+            if (text === 'حذف') { try { fs.removeSync(grpFile('rules', chatId)); reactOk(sock, m); } catch {} await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
             return;
         }
 
         if (state === 'ADMIN_BADWORDS') {
             if (text === 'رجوع') { await goBack(); return; }
             const bf = grpFile('badwords', chatId); let words = readJSON(bf, []);
-            if (text.startsWith('اضافة ')) { const w = text.slice(6).trim(); if (w) { words.push(w.toLowerCase()); writeJSON(bf, words); react(sock, m, '✅'); } await sleep(400); await showBadwords(); return; }
-            if (text.startsWith('حذف '))   { writeJSON(bf, words.filter(x => x !== text.slice(4).trim())); react(sock, m, '🗑️'); await sleep(400); await showBadwords(); return; }
+            if (text.startsWith('اضافة ')) { const w = text.slice(6).trim(); if (w) { words.push(w.toLowerCase()); writeJSON(bf, words); reactOk(sock, m); } await sleep(400); await showBadwords(); return; }
+            if (text.startsWith('حذف '))   { writeJSON(bf, words.filter(x => x !== text.slice(4).trim())); reactOk(sock, m); await sleep(400); await showBadwords(); return; }
             return;
         }
 
@@ -3069,7 +3147,7 @@ async function execute({ sock, msg }) {
                 const p = readProt();
                 p[LOCK_MAP[text]] = p[LOCK_MAP[text]] === 'on' ? 'off' : 'on';
                 writeProt(p);
-                react(sock, m, p[LOCK_MAP[text]] === 'on' ? '🔒' : '🔓');
+                reactOk(sock, m);
                 await sleep(500); await showAdminLocksMenu(); return;
             }
             return;
@@ -3096,9 +3174,9 @@ async function execute({ sock, msg }) {
             }
             if (text === 'اذاعة') { pushState('ADMIN_TOOLS', showAdminToolsMenu); await update('📢 اكتب رسالة الإذاعة:\n\n🔙 *رجوع*'); state = 'ADMIN_BROADCAST'; return; }
             if (text === 'تحديث') {
-                react(sock, m, '⏳');
-                try { await loadPlugins(); react(sock, m, '✅'); await update('✅ تم تحديث الاوامر.\n\n🔙 *رجوع*'); }
-                catch (e) { react(sock, m, '❌'); await update(`❌ ${e?.message}`); }
+                reactWait(sock, m);
+                try { await loadPlugins(); reactOk(sock, m); await update('☑️ تم تحديث الاوامر.\n\n🔙 *رجوع*'); }
+                catch (e) { reactFail(sock, m); await update(`❌ ${e?.message}`); }
                 return;
             }
             return;
@@ -3106,12 +3184,12 @@ async function execute({ sock, msg }) {
 
         if (state === 'ADMIN_BROADCAST') {
             if (text === 'رجوع') { await goBack(); return; }
-            react(sock, m, '⏳');
+            reactWait(sock, m);
             try {
                 const chats = await sock.groupFetchAllParticipating();
                 let sent = 0;
                 for (const gid of Object.keys(chats)) { try { await sock.sendMessage(gid, { text }); sent++; } catch {} await sleep(500); }
-                react(sock, m, '✅'); await update(`✅ الإرسال لـ ${sent} مجموعة.`);
+                reactOk(sock, m); await update(`☑️ الإرسال لـ ${sent} مجموعة.`);
             } catch (e) { await update(`❌ ${e?.message}`); }
             await sleep(1000); await showAdminToolsMenu(); state = 'ADMIN_TOOLS'; return;
         }
@@ -3163,8 +3241,8 @@ ${lines}
             if (text === 'رجوع') { await goBack(); return; }
             try {
                 await sock.updateProfileName(text.trim());
-                react(sock, m, '✅');
-                await update(`✅ تم تغيير اسم البوت الى:\n*${text.trim()}*\n\n🔙 *رجوع*`);
+                reactOk(sock, m);
+                await update(`☑️ تم تغيير اسم البوت الى:\n*${text.trim()}*\n\n🔙 *رجوع*`);
             } catch (e) { await update(`❌ ${e?.message}\n\n🔙 *رجوع*`); }
             await sleep(800); await showBotMenu(); state = 'BOT'; return;
         }
@@ -3173,8 +3251,8 @@ ${lines}
             if (text === 'رجوع') { await goBack(); return; }
             try {
                 await sock.updateProfileStatus(text.trim());
-                react(sock, m, '✅');
-                await update(`✅ تم تغيير وصف البوت.\n\n🔙 *رجوع*`);
+                reactOk(sock, m);
+                await update(`☑️ تم تغيير وصف البوت.\n\n🔙 *رجوع*`);
             } catch (e) { await update(`❌ ${e?.message}\n\n🔙 *رجوع*`); }
             await sleep(800); await showBotMenu(); state = 'BOT'; return;
         }
@@ -3184,7 +3262,7 @@ ${lines}
             const ctx2   = m.message?.extendedTextMessage?.contextInfo;
             const imgMsg = m.message?.imageMessage || ctx2?.quotedMessage?.imageMessage;
             if (!imgMsg) return update('🖼️ ارسل صورة فقط (لا نص).\n\n🔙 *رجوع*');
-            react(sock, m, '⏳');
+            reactWait(sock, m);
             try {
                 const target2 = m.message?.imageMessage
                     ? m
@@ -3192,50 +3270,80 @@ ${lines}
                 const buf = await downloadMediaMessage(target2, 'buffer', {});
                 const botJid = getBotJid(sock);
                 await sock.updateProfilePicture(botJid, buf);
-                react(sock, m, '✅');
-                await update('✅ تم تغيير صورة البوت.\n\n🔙 *رجوع*');
-            } catch (e) { react(sock, m, '❌'); await update(`❌ ${e?.message}\n\n🔙 *رجوع*`); }
+                reactOk(sock, m);
+                await update('☑️ تم تغيير صورة البوت.\n\n🔙 *رجوع*');
+            } catch (e) { reactFail(sock, m); await update(`❌ ${e?.message}\n\n🔙 *رجوع*`); }
             await sleep(800); await showBotMenu(); state = 'BOT'; return;
         }
 
         if (state === 'BOT_BLOCK') {
             if (text === 'رجوع') { await goBack(); return; }
             const ctxM = m.message?.extendedTextMessage?.contextInfo;
-            let target = ctxM?.mentionedJid?.[0] || ctxM?.participant;
-            if (!target) {
+            // منشن > رد > رقم مكتوب
+            let rawT = ctxM?.mentionedJid?.[0] || ctxM?.participant;
+            if (!rawT) {
                 const num = text.replace(/\D/g, '');
-                if (num.length >= 9) target = num + '@s.whatsapp.net';
+                if (num.length >= 9) rawT = num + '@s.whatsapp.net';
             }
-            if (!target) return update('❌ منشن الشخص او اكتب رقمه.\n\n🔙 *رجوع*');
+            if (!rawT) return update('❌ منشن الشخص او اكتب رقمه.\n\n🔙 *رجوع*');
+            // LID → phone JID (updateBlockStatus يقبل phone فقط)
+            let blockJid = rawT;
+            if (rawT.endsWith('@lid')) {
+                try {
+                    const ep = readJSON(path.join(BOT_DIR, '../../handlers/elite-pro.json'), {});
+                    blockJid  = (ep.twice || {})[rawT] || (normalizeJid(rawT) + '@s.whatsapp.net');
+                } catch { blockJid = normalizeJid(rawT) + '@s.whatsapp.net'; }
+            }
+            if (!blockJid.endsWith('@s.whatsapp.net'))
+                blockJid = normalizeJid(blockJid) + '@s.whatsapp.net';
+            reactWait(sock, m);
             try {
-                await sock.updateBlockStatus(target, 'block');
-                react(sock, m, '🔒');
-                await update(`✅ تم حظر @${normalizeJid(target)}\n\n🔙 *رجوع*`);
-            } catch (e) { await update(`❌ ${e?.message}\n\n🔙 *رجوع*`); }
+                await sock.updateBlockStatus(blockJid, 'block');
+                reactOk(sock, m);
+                await update(`☑️ تم حظر @${normalizeJid(blockJid)}\n\n🔙 *رجوع*`);
+            } catch (e) {
+                reactFail(sock, m);
+                console.error('[BOT_BLOCK]', e.message);
+                await update(`❌ فشل الحظر: ${(e?.message||'').slice(0,100)}\n\n🔙 *رجوع*`);
+            }
             await sleep(800); await showBotMenu(); state = 'BOT'; return;
         }
 
         if (state === 'BOT_UNBLOCK') {
             if (text === 'رجوع') { await goBack(); return; }
-            const ctxM = m.message?.extendedTextMessage?.contextInfo;
-            let target = ctxM?.mentionedJid?.[0] || ctxM?.participant;
-            if (!target) {
-                const num = text.replace(/\D/g, '');
-                if (num.length >= 9) target = num + '@s.whatsapp.net';
+            const ctxM2 = m.message?.extendedTextMessage?.contextInfo;
+            let rawT2 = ctxM2?.mentionedJid?.[0] || ctxM2?.participant;
+            if (!rawT2) {
+                const num2 = text.replace(/\D/g, '');
+                if (num2.length >= 9) rawT2 = num2 + '@s.whatsapp.net';
             }
-            if (!target) return update('❌ منشن الشخص او اكتب رقمه.\n\n🔙 *رجوع*');
+            if (!rawT2) return update('❌ منشن الشخص او اكتب رقمه.\n\n🔙 *رجوع*');
+            let unblockJid = rawT2;
+            if (rawT2.endsWith('@lid')) {
+                try {
+                    const ep2 = readJSON(path.join(BOT_DIR, '../../handlers/elite-pro.json'), {});
+                    unblockJid = (ep2.twice || {})[rawT2] || (normalizeJid(rawT2) + '@s.whatsapp.net');
+                } catch { unblockJid = normalizeJid(rawT2) + '@s.whatsapp.net'; }
+            }
+            if (!unblockJid.endsWith('@s.whatsapp.net'))
+                unblockJid = normalizeJid(unblockJid) + '@s.whatsapp.net';
+            reactWait(sock, m);
             try {
-                await sock.updateBlockStatus(target, 'unblock');
-                react(sock, m, '🔓');
-                await update(`✅ تم فك الحظر عن @${normalizeJid(target)}\n\n🔙 *رجوع*`);
-            } catch (e) { await update(`❌ ${e?.message}\n\n🔙 *رجوع*`); }
+                await sock.updateBlockStatus(unblockJid, 'unblock');
+                reactOk(sock, m);
+                await update(`☑️ تم فك الحظر عن @${normalizeJid(unblockJid)}\n\n🔙 *رجوع*`);
+            } catch (e) {
+                reactFail(sock, m);
+                console.error('[BOT_UNBLOCK]', e.message);
+                await update(`❌ فشل: ${(e?.message||'').slice(0,100)}\n\n🔙 *رجوع*`);
+            }
             await sleep(800); await showBotMenu(); state = 'BOT'; return;
         }
 
     }; // نهاية listener
 
     // ══════════════════════════════════════════════════════
-    //  ✅ FIX-2: download handler — فيديو >70MB → مستند
+    //  ☑️ FIX-2: download handler — فيديو >70MB → مستند
     // ══════════════════════════════════════════════════════
     async function handleDownload(url, audioOnly, m) {
         const platform = detectPlatform(url) || 'رابط';
@@ -3244,19 +3352,19 @@ ${lines}
 
         // ── حد لكل مستخدم: تنزيل واحد في نفس الوقت ──
         if (_dlPerUser.has(userKey)) {
-            react(sock, m, '⏳');
+            reactWait(sock, m);
             await update(`⏳ *طلبك السابق لم ينتهِ بعد*\nانتظر حتى ينتهي ثم أعد المحاولة.\n\n🔙 *رجوع*`);
             return;
         }
 
         // ── حد عام: 3 تنزيلات متزامنة ──
         if (_dlActive >= DL_MAX_CONCURRENT) {
-            react(sock, m, '⏳');
+            reactWait(sock, m);
             await update(`⏳ *البوت مشغول بـ ${_dlActive} تنزيل*\nانتظر قليلاً وأعد المحاولة.\n\n🔙 *رجوع*`);
             return;
         }
 
-        react(sock, m, '⏳');
+        reactWait(sock, m);
         await update(`${icon} *جاري تحميل ${platform}...*\nقد يأخذ بضع ثوانٍ.`);
 
         // ── Pinterest: scraper مباشر ──
@@ -3266,8 +3374,8 @@ ${lines}
                 if (imgUrl) {
                     const imgBuf = await downloadImageBuffer(imgUrl);
                     await sock.sendMessage(chatId, { image: imgBuf, caption: '📌 Pinterest' }, { quoted: m });
-                    react(sock, m, '✅');
-                    await update('✅ *تم!*\n\n🔙 *رجوع*');
+                    reactOk(sock, m);
+                    await update('☑️ *تم!*\n\n🔙 *رجوع*');
                     return;
                 }
             } catch (e) { console.error('[Pinterest]', e.message); }
@@ -3353,8 +3461,8 @@ ${lines}
                                 }, { quoted: m });
                             }
                         }
-                        react(sock, m, '✅');
-                        await update(`✅ *تم التحميل!*\n\n🔙 *رجوع*`);
+                        reactOk(sock, m);
+                        await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
                         return;
                     } catch (e) {
                         console.error('[ytmp41] فشل الإرسال:', e.message);
@@ -3385,11 +3493,11 @@ ${lines}
                             video: ytBuf, caption: `🎬 *${title}*`,
                         }, { quoted: m });
                     }
-                    react(sock, m, '✅');
-                    await update(`✅ *تم التحميل!*\n\n🔙 *رجوع*`);
+                    reactOk(sock, m);
+                    await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
                     return;
                 } catch (e) {
-                    react(sock, m, '❌');
+                    reactFail(sock, m);
                     await update(`❌ *فشل تحميل يوتيوب*\n${(e?.message || '').slice(0, 100)}\n\n🔙 *رجوع*`);
                     return;
                 }
@@ -3405,8 +3513,8 @@ ${lines}
                         await sock.sendMessage(chatId, {
                             video: buf, caption: `📸 انستقرام`,
                         }, { quoted: m });
-                        react(sock, m, '✅');
-                        await update(`✅ *تم التحميل!*\n\n🔙 *رجوع*`);
+                        reactOk(sock, m);
+                        await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
                         return;
                     } catch { /* fallthrough to yt-dlp */ }
                 }
@@ -3432,8 +3540,8 @@ ${lines}
                                 caption: `🎵 ${ttResult.author ? '@' + ttResult.author + ' — ' : ''}${ttResult.title || 'TikTok'}`,
                             }, { quoted: m });
                         }
-                        react(sock, m, '✅');
-                        await update(`✅ *تم التحميل!*\n\n🔙 *رجوع*`);
+                        reactOk(sock, m);
+                        await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
                         return;
                     } catch { /* fallthrough to yt-dlp */ }
                 }
@@ -3471,10 +3579,10 @@ ${lines}
                     fileName: path.basename(filePath), caption: `${icon} ${platform}`,
                 }, { quoted: m });
             }
-            react(sock, m, '✅');
-            await update(`✅ *تم التحميل!*\n\n🔙 *رجوع*`);
+            reactOk(sock, m);
+            await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
         } catch (e) {
-            react(sock, m, '❌');
+            reactFail(sock, m);
             const errText = e?.message || '';
             let hint = '';
             if (errText.includes('غير مثبت') || errText.includes('yt-dlp'))
@@ -3513,7 +3621,7 @@ ${lines}
 ✦ *مسح الكل*
 \`🧹 مسح الكل\`
 
-🔙 *رجوع* | 🏠 *الرئيسية*
+🔙 *رجوع*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
@@ -3538,6 +3646,31 @@ ${lines}
 \`➕ إضافة امر جديد\`
 
 🔙 *رجوع*
+
+✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
+    }
+
+    async function showPluginPage() {
+        const pages = tmp.pluginPages || [];
+        const page  = tmp.pluginPage  || 0;
+        if (!pages.length) return update('📭 لا يوجد أوامر.\n\n🔙 *رجوع*');
+        const total   = pages.reduce((s, p) => s + p.length, 0);
+        const lines   = pages[page].join('\n');
+        const hasNext = page < pages.length - 1;
+        const hasPrev = page > 0;
+        const nav = [
+            hasPrev ? '◀️ *السابق*' : '',
+            hasNext ? '*التالي* ▶️' : '',
+        ].filter(Boolean).join(' | ');
+        await update(
+`✧━── ❝ 𝐏𝐋𝐔𝐆𝐈𝐍𝐒 ❞ ──━✧
+
+*الاوامر (${total}) — صفحة ${page+1}/${pages.length}:*
+
+${lines}
+
+${nav}
+🔙 *رجوع* | 🏠 *الرئيسية*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
@@ -3585,10 +3718,10 @@ ${lines}
 
 *[ ${cmd} ]*
 
-✦ نخبة:     ${elite==='on'?'✅':'❌'}
-✦ قفل:      ${lock==='on'?'✅':'❌'}
-✦ مجموعات:  ${group?'✅':'❌'}
-✦ خاص:      ${prv?'✅':'❌'}
+✦ نخبة:     ${elite==='on'?'☑️':'❌'}
+✦ قفل:      ${lock==='on'?'☑️':'❌'}
+✦ مجموعات:  ${group?'☑️':'❌'}
+✦ خاص:      ${prv?'☑️':'❌'}
 
 ✦ *نخبة*    — تعيين للنخبة
 ✦ *عام*     — تعيين للعموم
@@ -3628,7 +3761,7 @@ ${lines}
 💡 *فيسبوك:* Reels & Videos
 📌 *بنترست:* بحث بالكلمة مباشر
 
-🔙 *رجوع* | 🏠 *الرئيسية*
+🔙 *رجوع*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
@@ -3639,18 +3772,52 @@ ${lines}
             .sort((a,b) => b[1]-a[1]).slice(0,5)
             .map(([k,v],i) => `${i+1}. ${k}: *${v}*`).join('\n') || 'لا يوجد';
 
-        // ── تحويل أي JID لـ phone@s.whatsapp.net ثم @mention ──
+        // ── دمج مزدوج: twice map + participants لحل LID → phone JID ──
+        let twiceMap = {};
+        try {
+            const ePath = path.join(BOT_DIR, '../../handlers/elite-pro.json');
+            twiceMap = readJSON(ePath, {}).twice || {};
+        } catch {}
+
+        let participants = [];
+        if (chatId.endsWith('@g.us')) {
+            try {
+                const meta = await sock.groupMetadata(chatId);
+                participants = meta.participants || [];
+            } catch {}
+        }
+
+        const resolveJid = (raw) => {
+            // 1. phone JID مباشرة
+            if (raw.endsWith('@s.whatsapp.net')) return raw;
+
+            // 2. LID → twice map
+            if (raw.endsWith('@lid') && twiceMap[raw]) return twiceMap[raw];
+
+            // 3. LID → participants
+            if (raw.endsWith('@lid')) {
+                const lidNum = normalizeJid(raw);
+                const found  = participants.find(p =>
+                    normalizeJid(p.lid || '') === lidNum || normalizeJid(p.id) === lidNum
+                );
+                if (found?.id?.endsWith('@s.whatsapp.net')) return found.id;
+            }
+
+            // 4. fallback: استخراج رقم نظيف
+            const num = raw.split('@')[0].split(':')[0].replace(/\D/g, '');
+            return num.length >= 7 ? num + '@s.whatsapp.net' : raw;
+        };
+
         const userEntries = Object.entries(s.users||{}).sort((a,b) => b[1]-a[1]).slice(0,5);
         const resolvedUsers = [];
         for (const [raw, count] of userEntries) {
-            // استخراج رقم نظيف من أي شكل (phone / LID / device suffix)
-            const num      = raw.split('@')[0].split(':')[0].replace(/\D/g, '');
-            const phoneJid = num.length >= 7 ? num + '@s.whatsapp.net' : raw;
-            resolvedUsers.push({ jid: phoneJid, num, count });
+            const phoneJid = resolveJid(raw);
+            const display  = normalizeJid(phoneJid);
+            resolvedUsers.push({ jid: phoneJid, display, count });
         }
 
         const topUsers = resolvedUsers
-            .map((u, i) => `${i+1}. @${u.num || normalizeJid(u.jid)}: *${u.count}*`)
+            .map((u, i) => `${i+1}. @${u.display} • *${u.count}* رسالة`)
             .join('\n') || 'لا يوجد';
         const mentions = resolvedUsers
             .map(u => u.jid)
@@ -3680,7 +3847,7 @@ ${topUsers}
     }
 
     async function showProtMenu() {
-        const p = readProt(), s = k => p[k]==='on'?'✅ مفعّل':'⛔ معطّل';
+        const p = readProt(), s = k => p[k]==='on'?'☑️ مفعّل':'⛔ معطّل';
         await update(
 `✧━── ❝ 𝐏𝐑𝐎𝐓𝐄𝐂𝐓𝐈𝐎𝐍 ❞ ──━✧
 
@@ -3694,7 +3861,7 @@ ${topUsers}
 \`🤬 حذف الكلمات البذيئة + تحذير\`
 
 اكتب اسم الميزة لتشغيلها أو إيقافها
-🔙 *رجوع* | 🏠 *الرئيسية*
+🔙 *رجوع*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
@@ -3713,7 +3880,7 @@ ${topUsers}
 ✦ *مسح كاش*
 \`🗑️ مسح الكاش وإعادة تحميل الأوامر\`
 
-🔙 *رجوع* | 🏠 *الرئيسية*
+🔙 *رجوع*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
@@ -3740,7 +3907,7 @@ ${topUsers}
 ✦ *الادوات*
 \`🤖 اذاعة ومعلومات وتحديث\`
 
-🔙 *رجوع* | 🏠 *الرئيسية*
+🔙 *رجوع*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
@@ -3750,7 +3917,7 @@ ${topUsers}
 `✧━── ❝ 𝐌𝐄𝐌𝐁𝐄𝐑𝐒 ❞ ──━✧
 
 ✦ *رفع مشرف*
-\`👑 رد على رسالته أو منشنه لترقيته\`
+\`⬆️ رد على رسالته أو منشنه لترقيته\`
 
 ✦ *تنزيل مشرف*
 \`⬇️ رد على رسالته أو منشنه لإزالة صلاحياته\`
@@ -3759,13 +3926,13 @@ ${topUsers}
 \`📋 عرض قائمة المشرفين الحاليين\`
 
 ✦ *طرد*
-\`🚪 رد على رسالته أو منشنه لطرده\`
+\`🚪 رد على رسالته أو منشنه لطرده من القروب\`
 
-✦ *حظر*
-\`🔨 طرد + حظر من العودة تلقائياً\`
+✦ *بان*
+\`🚫 منع العضو من استخدام البوت نهائياً\`
 
-✦ *الغاء حظر*
-\`✅ رفع الحظر والسماح بالعودة\`
+✦ *فك بان*
+\`☑️ إلغاء البان والسماح له باستخدام البوت\`
 
 ✦ *كتم*
 \`🔇 اكتب المدة بالدقائق ثم منشن أو رد\`
@@ -3819,7 +3986,7 @@ ${topUsers}
 \`🔗 الحصول على رابط دعوة المجموعة\`
 
 ✦ *انضم*
-\`✅ الانضمام لمجموعة عبر رابط\`
+\`☑️ الانضمام لمجموعة عبر رابط\`
 
 ✦ *خروج*
 \`🚪 مغادرة هذه المجموعة\`
@@ -3938,16 +4105,60 @@ ${list}
 ✦ *المجموعات*
 \`📊 عرض المجموعات واحصاءاتها\`
 
-🔙 *رجوع* | 🏠 *الرئيسية*
+🔙 *رجوع*
 
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
 
     // تسجيل الجلسة
     sock.ev.on('messages.upsert', listener);
-    // let بدل const حتى يُعاد ضبطه عند كل تفاعل
-    let timeout = setTimeout(cleanup, 300_000);
-    activeSessions.set(chatId, { listener, timeout, cleanupFn: cleanup, lastActivity: Date.now() });
+
+    const SESSION_MS = 300_000; // 5 دقائق
+    const REACT_CLEAR_BEFORE = 10_000; // امسح الرياكت قبل النهاية بـ 10 ثوانٍ
+
+    // مسح الرياكت 10 ثوانٍ قبل انتهاء الجلسة
+    let reactClearTimer = setTimeout(async () => {
+        try {
+            // مسح رياكت آخر رسالة عبر إرسال رياكت فارغ
+            await sock.sendMessage(chatId, {
+                react: { text: '', key: botMsgKey },
+            });
+        } catch {}
+    }, SESSION_MS - REACT_CLEAR_BEFORE);
+
+    let timeout = setTimeout(() => {
+        clearTimeout(reactClearTimer);
+        cleanup();
+    }, SESSION_MS);
+
+    // عند كل تفاعل: أعد ضبط كلا الـ timer
+    const _origListener = listener;
+    const wrappedListener = async (args) => {
+        clearTimeout(reactClearTimer);
+        clearTimeout(timeout);
+        reactClearTimer = setTimeout(async () => {
+            try {
+                await sock.sendMessage(chatId, {
+                    react: { text: '', key: botMsgKey },
+                });
+            } catch {}
+        }, SESSION_MS - REACT_CLEAR_BEFORE);
+        timeout = setTimeout(() => {
+            clearTimeout(reactClearTimer);
+            cleanup();
+        }, SESSION_MS);
+        await _origListener(args);
+    };
+
+    sock.ev.off('messages.upsert', listener);
+    sock.ev.on('messages.upsert', wrappedListener);
+
+    activeSessions.set(chatId, {
+        listener: wrappedListener,
+        timeout,
+        cleanupFn: cleanup,
+        lastActivity: Date.now(),
+    });
 }
 
 export default { NovaUltra, execute };
