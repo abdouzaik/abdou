@@ -1706,11 +1706,12 @@ async function _ytmp41Poll(progressId, title = '') {
         'x-rapidapi-host': YTMP41_HOST,
         'x-rapidapi-key':  YTMP41_KEY,
     };
-    const MAX_TRIES = 20;
-    const INTERVAL  = 3_000; // 3 ثواني بين كل محاولة
+    const MAX_TRIES = 15;
+    const INTERVAL  = 2_000; // 2 ثانية بين كل محاولة
 
     for (let i = 0; i < MAX_TRIES; i++) {
-        await sleep(INTERVAL);
+        // أول محاولة بعد ثانية واحدة، الباقي 2 ثانية
+        await sleep(i === 0 ? 1_000 : INTERVAL);
         try {
             const resp = await fetch(
                 `https://${YTMP41_HOST}/api/v1/progress?id=${progressId}`,
@@ -1742,7 +1743,7 @@ const ytmp41 = {
     },
 
     // تحميل فيديو mp4
-    async video(url, quality = '720') {
+    async video(url, quality = '480') {
         try {
             const id = this.getId(url);
             if (!id) return null;
@@ -2060,8 +2061,8 @@ function getVideoFormats(url) {
     if (isYouTube(url)) {
         // YouTube: أبسط format يعمل بدون merge معقد
         return [
-            'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[ext=mp4]/best',
-            'best[height<=720]/best',
+            'bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/best[ext=mp4][height<=480]/best[ext=mp4]/best',
+            'best[height<=480]/best',
             'best',
         ];
     }
@@ -3290,7 +3291,7 @@ ${lines}
                 // ── تحميل بـ youtube-mp41 (RapidAPI) ──
                 const apiResult = audioOnly
                     ? await ytmp41.audio(url).catch(() => null)
-                    : await ytmp41.video(url, '720').catch(() => null);
+                    : await ytmp41.video(url, '480').catch(() => null);
 
                 if (apiResult?.url) {
                     try {
