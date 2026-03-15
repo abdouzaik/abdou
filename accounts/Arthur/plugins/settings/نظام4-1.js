@@ -752,6 +752,16 @@ async function isBotGroupAdmin(sock, chatId) {
 // ── cooldown لـ antiPrivate ──
 const _pvtCooldown  = new Map();
 const activeSessions = new Map(); // ← moved here: يجب أن تكون قبل setInterval
+global.activeSessions = activeSessions; // ← يُتاح لـ تصفير.js
+
+// ── ضبط owner من config.js ──────────────────────────
+// لو _botConfig.owner فارغ → البوت نفسه يكون الأونر
+if (!global._botConfig) global._botConfig = {};
+if (!global._botConfig.owner && configObj?.owner) {
+    global._botConfig.owner = configObj.owner;
+}
+// fallback: رقم البوت نفسه (يُضبط بعد اتصال البوت)
+// يُحدَّث في messages.js أو index.js عند open connection
 
 // ── Rate Limiter — الحد: 20 رسالة/دقيقة لكل مستخدم ──
 const _rateMap = new Map();
@@ -2525,6 +2535,12 @@ const NovaUltra = {
 async function execute({ sock, msg }) {
     const chatId = msg.key.remoteJid;
     const sender = msg.key.participant || chatId;
+
+    // ── fallback: لو owner ما ضُبط بعد، اجعل البوت نفسه الأونر ──
+    if (!global._botConfig?.owner && sock.user?.id) {
+        if (!global._botConfig) global._botConfig = {};
+        global._botConfig.owner = normalizeJid(sock.user.id);
+    }
 
     registerDeleteListener(sock);
     registerWelcomeListener(sock);
