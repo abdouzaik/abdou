@@ -1,78 +1,83 @@
 // ══════════════════════════════════════════════════════════════
-//  تصفير.js — مسح جميع جلسات نظام.js النشطة (نسخة متوافقة مع نظام 4-1)
+//  تصفير.js — مسح جميع جلسات نظام.js النشطة
 // ══════════════════════════════════════════════════════════════
-
-const normalizeJid = jid => 
-    jid ? jid.split('@')[0].split(':')[0].replace(/\D/g, '') : '';
 
 const NovaUltra = {
     command:     'تصفير',
     description: 'مسح جميع جلسات نظام.js النشطة من الذاكرة',
-    elite:       'on', // متاح للنخبة/المطور فقط
+    elite:       'on',
     group:       false,
     prv:         false,
     lock:        'off',
 };
 
-async function execute({ sock, msg, sender }) {
+const _norm = jid => jid ? jid.split('@')[0].split(':')[0].replace(/\D/g, '') : '';
+
+async function execute({ sock, msg }) {
     const chatId    = msg.key.remoteJid;
     const senderJid = msg.key.participant || chatId;
 
-    // ── فحص الصلاحية: المطور فقط ──────────────────────
-    const ownerNum  = normalizeJid(global._botConfig?.owner || '');
-    const senderNum = normalizeJid(senderJid);
-    const isOwner   = msg.key.fromMe || (ownerNum && senderNum === ownerNum);
+    // ── الأونر فقط ──────────────────────────────────────────
+    const ownerNum  = (_norm(global._botConfig?.owner || '') || '213540419314');
+    const senderNum = _norm(senderJid);
+    const isOwner   = msg.key.fromMe || senderNum === ownerNum;
 
     if (!isOwner) {
         await sock.sendMessage(chatId, { react: { text: '🚫', key: msg.key } }).catch(() => {});
         return;
     }
 
-    // ── جلب الجلسات من global.activeSessions ───────────
     const sessions = global.activeSessions;
 
     if (!sessions || typeof sessions.size === 'undefined') {
         await sock.sendMessage(chatId, {
-            text: '⚠️ لم يتم العثور على حاوية الجلسات في الذاكرة (global.activeSessions).',
+            text: '⚠️ global.activeSessions غير موجود.',
+        }, { quoted: msg });
+        return;
+    }
+
+    if (sessions.size === 0) {
+        await sock.sendMessage(chatId, {
+            text: '✅ لا توجد جلسات نشطة.',
         }, { quoted: msg });
         return;
     }
 
     const count = sessions.size;
-
-    if (count === 0) {
-        await sock.sendMessage(chatId, {
-            text: '✅ لا توجد جلسات نشطة حالياً لتصفيرها.',
-        }, { quoted: msg });
-        return;
-    }
-
-    // ── تنظيف الذاكرة ──────────────────────────────────
     let cleaned = 0;
+
     for (const [id, session] of sessions) {
         try {
-            // إيقاف مؤقت الجلسة لمنع التنفيذ اللاحق
-            if (session.timeout) clearTimeout(session.timeout);
+            // 1. إيقاف مؤقت الجلسة
+            if (session.timeout)       clearTimeout(session.timeout);
 
-            // إزالة الـ listener الخاص بـ messages.upsert
-            if (session.listener) sock.ev.off('messages.upsert', session.listener);
+            // 2. إيقاف مؤقت مسح الرياكت
+            if (session.reactClearTimer) clearTimeout(session.reactClearTimer);
 
-            // تشغيل دالة التنظيف الإضافية إن وجدت
-            if (typeof session.cleanupFn === 'function') session.cleanupFn();
+            // 3. إزالة wrappedListener (المسجّل الفعلي على sock.ev)
+            if (session.listener) {
+                try { sock.ev.off('messages.upsert', session.listener); } catch {}
+            }
+
+            // 4. تشغيل cleanupFn لو موجودة (تزيل listener الأصلي أيضاً)
+            if (typeof session.cleanupFn === 'function') {
+                try { session.cleanupFn(); } catch {}
+            }
 
             sessions.delete(id);
             cleaned++;
-        } catch (e) {
+        } catch {
             sessions.delete(id);
             cleaned++;
         }
     }
 
-    // ── تأكيد النجاح ──────────────────────────────────
-    await sock.sendMessage(chatId, { react: { text: '☑️', key: msg.key } }).catch(() => {});
+    // تأكد من تفريغ كامل
+    sessions.clear();
 
+    await sock.sendMessage(chatId, { react: { text: '☑️', key: msg.key } }).catch(() => {});
     await sock.sendMessage(chatId, {
-        text: `🧹 *تم تنظيف الذاكرة بنجاح*\n\n✔️ الجلسات الممسوحة: *${cleaned}*\n🔄 الحالة: الذاكرة فارغة الآن.`,
+        text: `🧹 *تم تنظيف الذاكرة*\n✔️ ممسوح: *${cleaned}* جلسة\n🔄 الذاكرة فارغة الآن.`,
     }, { quoted: msg });
 }
 

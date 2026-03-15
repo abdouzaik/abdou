@@ -757,10 +757,8 @@ global.activeSessions = activeSessions; // ← يُتاح لـ تصفير.js
 // ── ضبط owner من config.js ──────────────────────────
 // الأولوية: config.js → _botConfig الموجود → البوت نفسه
 if (!global._botConfig) global._botConfig = {};
-// دائماً خذ owner من config.js إذا كان موجوداً (يضمن sync)
-if (configObj?.owner) {
-    global._botConfig.owner = String(configObj.owner).replace(/\D/g, '');
-}
+// owner ثابت: 213540419314
+global._botConfig.owner = '213540419314';
 // fallback: رقم البوت نفسه (يُضبط بعد اتصال البوت)
 // يُحدَّث في messages.js أو index.js عند open connection
 
@@ -1156,11 +1154,61 @@ async function slashCommandHandler(sock, msg) {
         const isGroup   = chatId.endsWith('@g.us');
         const senderRaw = msg.key.participant || chatId;
 
-        // فحص النخبة
-        try {
-            const isElite = msg.key.fromMe || await sock.isElite?.({ sock, id: senderRaw });
-            if (!isElite) return;
-        } catch { return; }
+        // ── فحص الأونر المضمّن ──────────────────────────────────
+        const _ownerNum = (global._botConfig?.owner || '213540419314').replace(/\D/g, '');
+        const _senderNum = normalizeJid(senderRaw);
+
+        // ── فحص النخبة المحكم (phone + LID + twice + file) ──────
+        let _isElite = msg.key.fromMe || (_ownerNum && _senderNum === _ownerNum);
+
+        if (!_isElite) {
+            // نبني phone JID صالح
+            const _phoneCand = msg.key.participantAlt?.endsWith('@s.whatsapp.net')
+                ? msg.key.participantAlt : null;
+            const _lidCand = senderRaw.endsWith('@lid') ? senderRaw : null;
+
+            // 1. sock.isElite بـ phone
+            if (!_isElite && _phoneCand) {
+                try { _isElite = !!(await sock.isElite?.({ sock, id: _phoneCand })); } catch {}
+            }
+            // 2. sock.isElite بـ LID
+            if (!_isElite && _lidCand) {
+                try { _isElite = !!(await sock.isElite?.({ sock, id: _lidCand })); } catch {}
+            }
+            // 3. sock.isElite بـ senderRaw كما هو
+            if (!_isElite) {
+                try { _isElite = !!(await sock.isElite?.({ sock, id: senderRaw })); } catch {}
+            }
+            // 4. قراءة elite-pro.json مباشرة
+            if (!_isElite) {
+                try {
+                    const _ep    = JSON.parse(fs.readFileSync(path.join(BOT_DIR, '../../handlers/elite-pro.json'), 'utf8'));
+                    const _jids  = _ep.jids || [];
+                    const _lids  = _ep.lids || [];
+                    const _twice = _ep.twice || {};
+                    const _pNum  = _phoneCand ? normalizeJid(_phoneCand) : '';
+                    const _lNum  = _lidCand   ? normalizeJid(_lidCand)   : '';
+
+                    if (_pNum && _jids.some(j => normalizeJid(j) === _pNum)) _isElite = true;
+                    if (!_isElite && _lNum && _lids.some(l => normalizeJid(l) === _lNum)) _isElite = true;
+                    if (!_isElite && _senderNum) {
+                        if (_jids.some(j => normalizeJid(j) === _senderNum)) _isElite = true;
+                        if (!_isElite && _lids.some(l => normalizeJid(l) === _senderNum)) _isElite = true;
+                    }
+                    // twice map
+                    if (!_isElite) {
+                        const _via = _twice[senderRaw] || _twice[_phoneCand] || _twice[_lidCand];
+                        if (_via) {
+                            const _vNum = normalizeJid(_via);
+                            if (_jids.some(j => normalizeJid(j) === _vNum)) _isElite = true;
+                            if (!_isElite && _lids.some(l => normalizeJid(l) === _vNum)) _isElite = true;
+                        }
+                    }
+                } catch {}
+            }
+        }
+
+        if (!_isElite) return;
 
         const body      = text.slice(SLASH.length).trim();
         const parts     = body.split(/\s+/);
@@ -1218,6 +1266,30 @@ async function slashCommandHandler(sock, msg) {
                     if (check?.[0]?.exists) return check[0].jid;
                     return num + '@s.whatsapp.net';
                 } catch { return num + '@s.whatsapp.net'; }
+            }
+            return null;
+        };
+
+        // resolvePhoneJid — يحوّل أي JID (حتى LID) لـ phone@s.whatsapp.net
+        // مطلوب لـ updateBlockStatus الذي يقبل phone فقط
+        const resolvePhoneJid = async (rawJid) => {
+            if (!rawJid) return null;
+            // phone مباشرة
+            if (rawJid.endsWith('@s.whatsapp.net')) return rawJid;
+            // LID → twice map أولاً
+            try {
+                const _ep = JSON.parse(fs.readFileSync(path.join(BOT_DIR, '../../handlers/elite-pro.json'), 'utf8'));
+                const mapped = (_ep.twice || {})[rawJid];
+                if (mapped && mapped.endsWith('@s.whatsapp.net')) return mapped;
+            } catch {}
+            // sock.onWhatsApp للتحقق
+            const num = normalizeJid(rawJid);
+            if (num.length >= 7) {
+                try {
+                    const check = await sock.onWhatsApp(num + '@s.whatsapp.net');
+                    if (check?.[0]?.exists) return check[0].jid;
+                } catch {}
+                return num + '@s.whatsapp.net';
             }
             return null;
         };
@@ -1781,27 +1853,40 @@ async function slashCommandHandler(sock, msg) {
             return;
         }
 
-        // /بلوك [رقم/منشن] — حظر على مستوى البوت
+        // /بلوك [رقم/منشن/رد] — حظر حساب واتساب
         if (cmd === 'بلوك') {
-            const target = await resolveSlashTarget();
-            if (!target) return reply('↩️ منشن الشخص أو اكتب رقمه.');
+            const rawT = await resolveSlashTarget();
+            if (!rawT) return reply('↩️ منشن الشخص أو رد على رسالته أو اكتب رقمه.');
+            reactWait(sock, msg);
+            const phoneJid = await resolvePhoneJid(rawT);
+            if (!phoneJid) return reply('❌ تعذر تحديد رقم الهاتف.');
             try {
-                await sock.updateBlockStatus(target, 'block');
+                await sock.updateBlockStatus(phoneJid, 'block');
                 reactOk(sock, msg);
-                await reply('☑️ تم حظر @' + normalizeJid(target));
-            } catch (e) { await reply('❌ ' + e?.message); }
+                await reply('🔒 تم حظر @' + normalizeJid(phoneJid) + ' من حساب البوت.');
+            } catch (e) {
+                reactFail(sock, msg);
+                console.error('[/بلوك]', e.message);
+                await reply('❌ فشل الحظر: ' + (e?.message || '').slice(0, 100));
+            }
             return;
         }
 
-        // /فك-بلوك [رقم/منشن]
-        if (cmd === 'فك-بلوك' || twoWord === 'فك بلوك') {
-            const target = await resolveSlashTarget();
-            if (!target) return reply('↩️ منشن الشخص أو اكتب رقمه.');
+        // /فك بلوك [رقم/منشن/رد]
+        if (cmd === 'فك' && rest.startsWith('بلوك') || twoWord === 'فك بلوك' || cmd === 'فك-بلوك') {
+            const rawT2 = await resolveSlashTarget();
+            if (!rawT2) return reply('↩️ منشن الشخص أو رد على رسالته أو اكتب رقمه.');
+            reactWait(sock, msg);
+            const phoneJid2 = await resolvePhoneJid(rawT2);
+            if (!phoneJid2) return reply('❌ تعذر تحديد رقم الهاتف.');
             try {
-                await sock.updateBlockStatus(target, 'unblock');
+                await sock.updateBlockStatus(phoneJid2, 'unblock');
                 reactOk(sock, msg);
-                await reply('☑️ تم فك الحظر عن @' + normalizeJid(target));
-            } catch (e) { await reply('❌ ' + e?.message); }
+                await reply('🔓 تم فك الحظر عن @' + normalizeJid(phoneJid2));
+            } catch (e) {
+                reactFail(sock, msg);
+                await reply('❌ فشل: ' + (e?.message || '').slice(0, 100));
+            }
             return;
         }
 
@@ -2538,11 +2623,9 @@ async function execute({ sock, msg }) {
     const chatId = msg.key.remoteJid;
     const sender = msg.key.participant || chatId;
 
-    // ── fallback: لو owner ما ضُبط بعد، اجعل البوت نفسه الأونر ──
-    if (!global._botConfig?.owner && sock.user?.id) {
-        if (!global._botConfig) global._botConfig = {};
-        global._botConfig.owner = normalizeJid(sock.user.id);
-    }
+    // ── owner ثابت: 213540419314 ── دائماً يُضبط من هنا
+    if (!global._botConfig) global._botConfig = {};
+    global._botConfig.owner = '213540419314';
 
     registerDeleteListener(sock);
     registerWelcomeListener(sock);
@@ -2670,8 +2753,16 @@ ${who} يستخدم النظام الآن.
     };
 
     const cleanup = () => {
+        // نزيل كل المستمعين المحتملين
         sock.ev.off('messages.upsert', listener);
+        // wrappedListener مخزّن في activeSessions — نزيله أيضاً
+        const sess = activeSessions.get(chatId);
+        if (sess?.listener && sess.listener !== listener) {
+            sock.ev.off('messages.upsert', sess.listener);
+        }
         clearTimeout(timeout);
+        // مسح reactClearTimer لو موجود في الجلسة
+        if (sess?.reactClearTimer) clearTimeout(sess.reactClearTimer);
         activeSessions.delete(chatId);
     };
 
@@ -4627,12 +4718,13 @@ ${list}
     sock.ev.on('messages.upsert', wrappedListener);
 
     activeSessions.set(chatId, {
-        listener:     wrappedListener,
+        listener:        wrappedListener,
         timeout,
-        cleanupFn:    cleanup,
-        lastActivity: Date.now(),
+        reactClearTimer,
+        cleanupFn:       cleanup,
+        lastActivity:    Date.now(),
         sender,
-        isOwnerSess,   // لتمييز نوع الجلسة
+        isOwnerSess,
     });
 }
 
