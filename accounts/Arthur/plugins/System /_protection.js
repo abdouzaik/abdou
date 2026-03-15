@@ -15,7 +15,7 @@ import {
     registerDeleteListener, registerWelcomeListener, isRateLimited,
     configObj,
 } from './_utils.js';
-import { loadPlugins } from '../../../handlers/plugins.js';
+import { loadPlugins } from '../../handlers/plugins.js';
 import path from 'path';
 import fs from 'fs-extra';
 
