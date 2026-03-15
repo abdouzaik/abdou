@@ -212,10 +212,6 @@ async function handleSingleMessage(sock, msg) {
 
     const chatId = msg.key.remoteJid;
 
-    if (sock.activeListeners && sock.activeListeners.has(chatId)) {
-        return; 
-    }
-
     const isGroup = chatId.endsWith("@g.us");
     const messageText = msg.message?.conversation || 
                         msg.message?.extendedTextMessage?.text || 
@@ -224,16 +220,22 @@ async function handleSingleMessage(sock, msg) {
 
     const { prefix, botState, modeState } = getLiveSystemConfig();
 
-    if (!messageText.startsWith(prefix)) return;
-
-    // ── featureHandlers: تعمل على كل رسالة (قبل فحص الـ prefix) ──
-    // ملاحظة: نعيد الفحص هنا لأن featureHandlers تحتاج كل الرسائل وليس الأوامر فقط
-    // لكن نضعها هنا بعد prefix للحفاظ على ترتيب الملف الحالي
+    // ── featureHandlers أولاً — قبل كل شيء ──────────────────────
+    // يجب أن يكون قبل activeListeners لأن:
+    // 1. أوامر / (slash) تشتغل حتى لو فيه جلسة نظام نشطة
+    // 2. antiLink/antiDelete/protection تشتغل على كل الرسائل
     if (global.featureHandlers?.length) {
         for (const handler of global.featureHandlers) {
             try { await handler(sock, msg); } catch {}
         }
     }
+
+    // ── الجلسة النشطة (نظام) تأخذ الرسائل العادية بعد slash ──
+    if (sock.activeListeners && sock.activeListeners.has(chatId)) {
+        return; 
+    }
+
+    if (!messageText.startsWith(prefix)) return;
 
     const BIDS = {
         pn: sock.user.id.split(":")[0] + "@s.whatsapp.net",
