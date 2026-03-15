@@ -14,7 +14,7 @@ import {
     configObj,
 } from './_utils.js';
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
-import { loadPlugins } from '../../../handlers/plugins.js';
+import { loadPlugins } from '../../handlers/plugins.js';
 import path from 'path';
 import fs from 'fs-extra';
 import { ytmp41, ytapi, savefrom, tikwm, getYtdlpBin, ytdlpDownload,

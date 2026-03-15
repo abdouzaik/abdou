@@ -11,15 +11,15 @@ import {
     normalizeJid, getBotJid, checkElite,
     grpFile, DATA_DIR, BOT_DIR, activeSessions, MAIN_MENU,
     registerDeleteListener, registerWelcomeListener,
-} from './system/_utils.js';
+} from './_utils.js';
 
-import { handleElite,   showEliteMenu }              from './system/s_نخبة.js';
-import { handlePlugins, showPluginsMenu }             from './system/s_بلاجنز.js';
-import { handleDl,      showDlMenu, handleDownload }  from './system/s_تنزيلات.js';
+import { handleElite,   showEliteMenu }              from './s_نخبة.js';
+import { handlePlugins, showPluginsMenu }             from './s_بلاجنز.js';
+import { handleDl,      showDlMenu, handleDownload }  from './s_تنزيلات.js';
 import { handleGeneral, showStats, showProtMenu,
-         showCmdTools }                               from './system/s_عام.js';
-import { handleAdmin,   showAdminMenu }               from './system/s_إدارة.js';
-import { handleBot,     showBotMenu }                 from './system/s_بوت.js';
+         showCmdTools }                               from './s_عام.js';
+import { handleAdmin,   showAdminMenu }               from './s_إدارة.js';
+import { handleBot,     showBotMenu }                 from './s_بوت.js';
 import './system/_protection.js';
 
 const NovaUltra = {
