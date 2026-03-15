@@ -1,3 +1,4 @@
+import configImport from '../nova/config.js';
 // ══════════════════════════════════════════════════════════════
 //  تصفير.js — مسح جميع جلسات نظام.js النشطة
 // ══════════════════════════════════════════════════════════════
@@ -18,7 +19,7 @@ async function execute({ sock, msg }) {
     const senderJid = msg.key.participant || chatId;
 
     // ── الأونر فقط ──────────────────────────────────────────
-    const ownerNum  = (_norm(global._botConfig?.owner || '') || '213540419314');
+    const ownerNum  = (global._botConfig?.owner || configImport?.owner || '213540419314').toString().replace(/\D/g, '');
     const senderNum = _norm(senderJid);
     const isOwner   = msg.key.fromMe || senderNum === ownerNum;
 

@@ -757,8 +757,8 @@ global.activeSessions = activeSessions; // ← يُتاح لـ تصفير.js
 // ── ضبط owner من config.js ──────────────────────────
 // الأولوية: config.js → _botConfig الموجود → البوت نفسه
 if (!global._botConfig) global._botConfig = {};
-// owner ثابت: 213540419314
-global._botConfig.owner = '213540419314';
+// owner من config.js دائماً
+global._botConfig.owner = (configObj?.owner || '213540419314').toString().replace(/\D/g, '');
 // fallback: رقم البوت نفسه (يُضبط بعد اتصال البوت)
 // يُحدَّث في messages.js أو index.js عند open connection
 
@@ -1155,7 +1155,7 @@ async function slashCommandHandler(sock, msg) {
         const senderRaw = msg.key.participant || chatId;
 
         // ── فحص الأونر المضمّن ──────────────────────────────────
-        const _ownerNum = (global._botConfig?.owner || '213540419314').replace(/\D/g, '');
+        const _ownerNum = (global._botConfig?.owner || configObj?.owner || '213540419314').toString().replace(/\D/g, '');
         const _senderNum = normalizeJid(senderRaw);
 
         // ── فحص النخبة المحكم (phone + LID + twice + file) ──────
@@ -2623,9 +2623,9 @@ async function execute({ sock, msg }) {
     const chatId = msg.key.remoteJid;
     const sender = msg.key.participant || chatId;
 
-    // ── owner ثابت: 213540419314 ── دائماً يُضبط من هنا
+    // ── owner من config.js ──
     if (!global._botConfig) global._botConfig = {};
-    global._botConfig.owner = '213540419314';
+    global._botConfig.owner = (configObj?.owner || '213540419314').toString().replace(/\D/g, '');
 
     registerDeleteListener(sock);
     registerWelcomeListener(sock);
