@@ -1,187 +1,176 @@
-import { fork }     from 'child_process';
+import { fork } from 'child_process';
 import { join, dirname, resolve } from 'path';
-import fs           from 'fs-extra';
+import fs from 'fs-extra';
 import { fileURLToPath } from 'url';
 import * as accountUtils from './accounts/accountUtils.js';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname  = dirname(__filename);
+const __dirname = dirname(__filename);
 
 const colors = {
-    reset: "\x1b[0m", bright: "\x1b[1m",
-    fg: { red:"\x1b[31m", green:"\x1b[32m", yellow:"\x1b[33m", cyan:"\x1b[36m", white:"\x1b[37m" }
-};
-const logger = {
-    success: m => console.log(colors.fg.green  + colors.bright + '✓ ' + m + colors.reset),
-    error:   m => console.error(colors.fg.red  + colors.bright + '✗ ' + m + colors.reset),
-    info:    m => console.info(colors.fg.cyan  + colors.bright + 'ℹ ' + m + colors.reset),
-    warn:    m => console.warn(colors.fg.yellow+ colors.bright + '⚠ ' + m + colors.reset),
+    reset: "\x1b[0m",
+    bright: "\x1b[1m",
+    fg: {
+        red: "\x1b[31m",
+        green: "\x1b[32m",
+        yellow: "\x1b[33m",
+        cyan: "\x1b[36m",
+        white: "\x1b[37m",
+    }
 };
 
-const maxRetries  = 3;
-const retryDelay  = 5000;
+const logger = {
+    success(message) {
+        console.log(colors.fg.green + colors.bright + '✓ ' + message + colors.reset);
+    },
+    error(message, error = '') {
+        console.error(colors.fg.red + colors.bright + '✗ ' + message + (error ? ': ' + error : '') + colors.reset);
+    },
+    info(message) {
+        console.info(colors.fg.cyan + colors.bright + 'ℹ ' + message + colors.reset);
+    },
+    warn(message) {
+        console.warn(colors.fg.yellow + colors.bright + '⚠ ' + message + colors.reset);
+    }
+};
+
+const maxRetries = 3;
+const retryDelay = 5000;
 const accountsDir = join(__dirname, 'accounts');
 
-// ── خريطة العمليات الفرعية الحية ──────────────────────────────
-// key = accountName, value = { child, retryCount }
-const runningAccounts = new Map();
+let isRunning = false;
+let retryCount = 0;
 
-if (!fs.existsSync(accountsDir)) fs.mkdirSync(accountsDir, { recursive: true });
+if (!fs.existsSync(accountsDir)) {
+    fs.mkdirSync(accountsDir, { recursive: true });
+}
 
-function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+function handleConnection(retry = 0) {
+    if (isRunning) return;
 
-// ══════════════════════════════════════════════════════════════
-// تشغيل حساب واحد
-// ══════════════════════════════════════════════════════════════
-function spawnAccount(accountName, isLoginMode = false, retry = 0) {
-    if (runningAccounts.has(accountName)) {
-        logger.warn(`⚠️ Account [${accountName}] already running.`);
-        return;
+    let accountName = accountUtils.getCurrentAccountName();
+    let isLoginMode = false;
+    let targetFolder;
+
+    if (!accountName) {
+        isLoginMode = true;
+        accountName = 'default'; 
+        
+        
+        
+        logger.info('🔒 Securing accounts...');
+        accountUtils.lockAllAccounts();
+        
+
+    } else {
+        const potentialPath = join(accountsDir, accountName);
+        if (!fs.existsSync(potentialPath)) {
+            logger.warn(`⚠️ Account [${accountName}] folder not found! Reverting to Login Mode.`);
+            accountUtils.logoutAccount(); 
+            isLoginMode = true;
+            accountName = 'default';
+             
+            accountUtils.lockAllAccounts();
+        }
     }
 
-    let targetFolder;
+    
     if (isLoginMode) {
         targetFolder = resolve(__dirname, 'node_modules', 'default');
     } else {
         targetFolder = join(accountsDir, accountName);
     }
 
-    if (!fs.existsSync(targetFolder)) fs.mkdirSync(targetFolder, { recursive: true });
+    if (!fs.existsSync(targetFolder)) {
+        fs.mkdirSync(targetFolder, { recursive: true });
+    }
 
     const connectionFolder = join(targetFolder, 'ملف_الاتصال');
 
-    if (isLoginMode) logger.info('🔐 Starting Gateway System (Login Mode)...');
-    else             logger.info(`🚀 Starting Account: [ ${accountName} ]`);
+    isRunning = true;
+
+    if (isLoginMode) {
+        logger.info('🔐 Starting Gateway System (Login Mode)...');
+    } else {
+        logger.info(`🚀 Starting Account: [ ${accountName} ]`);
+    }
 
     const child = fork(join(__dirname, 'main.js'), [], {
         stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
         env: {
             ...process.env,
-            TARGET_FOLDER:     targetFolder,
-            ACCOUNT_NAME:      accountName,
-            LOGIN_MODE:        isLoginMode ? 'true' : 'false',
-            CONNECTION_FOLDER: connectionFolder,
+            TARGET_FOLDER: targetFolder,      
+            ACCOUNT_NAME: accountName,        
+            LOGIN_MODE: isLoginMode ? 'true' : 'false', 
+            CONNECTION_FOLDER: connectionFolder 
         }
     });
 
-    runningAccounts.set(accountName, { child, retryCount: retry });
-
-    child.on('message', async (data) => {
+    child.on('message', (data) => {
         if (data === 'ready') {
+            retryCount = 0;
             if (!isLoginMode) logger.success(`✅ [${accountName}] is online!`);
-            else              logger.info('✅ Gateway is ready.');
-
+            else logger.info('✅ Gateway is ready to accept commands.');
+            
         } else if (data === 'reset') {
-            logger.warn(`🔄 [${accountName}] Reloading...`);
+            logger.warn('🔄 System State Changed. Reloading...');
             child.kill();
-            runningAccounts.delete(accountName);
-            await delay(1000);
-            spawnAccount(accountName, isLoginMode, 0);
-
+            isRunning = false;
+            setTimeout(() => handleConnection(0), 1000);
+            
         } else if (data === 'uptime') {
             child.send(process.uptime());
-
-        // ── طلب إنشاء حساب فرعي جديد ──
-        } else if (data?.type === 'spawn_sub') {
-            const { name } = data;
-            logger.info(`➕ Spawning sub-account: [${name}]`);
-            spawnAccount(name, false, 0);
-
-        // ── طلب إيقاف حساب فرعي ──
-        } else if (data?.type === 'kill_sub') {
-            const { name } = data;
-            killAccount(name);
         }
     });
 
     child.on('exit', async (code) => {
-        runningAccounts.delete(accountName);
+        isRunning = false;
 
-        if (code === 0) { logger.info(`✅ [${accountName}] closed naturally.`); return; }
+        if (code === 0) {
+            logger.info('✅ Bot closed naturally.');
+            return;
+        }
+
         if (code === 429) {
-            logger.warn(`⚠️ [${accountName}] Rate limit, waiting 10s...`);
+            logger.warn('⚠️ Rate limit exceeded, waiting 10 seconds...');
             await delay(10000);
-            return spawnAccount(accountName, isLoginMode, retry);
+            return handleConnection(retry);
         }
 
         if (retry < maxRetries) {
             retry++;
-            logger.warn(`⚠️ [${accountName}] Restarting (${retry}/${maxRetries})...`);
+            logger.warn(`⚠️ Restarting (${retry}/${maxRetries}) after ${retryDelay / 1000} seconds...`);
             await delay(retryDelay);
-            spawnAccount(accountName, isLoginMode, retry);
+            handleConnection(retry);
         } else {
-            logger.error(`❌ [${accountName}] Failed after ${maxRetries} retries.`);
-            // الحساب الرئيسي فشل = أوقف الكل
-            if (!isLoginMode && accountName === accountUtils.getMasterAccountName()) {
-                process.exit(1);
-            }
+            logger.error('❌ Failed! Error.');
+            process.exit(1);
         }
     });
 
     child.on('error', (err) => {
-        runningAccounts.delete(accountName);
-        logger.error(`❌ [${accountName}] Process error: ${err.message}`);
+        isRunning = false;
+        logger.error(`❌ Child process error: ${err}`);
         if (retry < maxRetries) {
-            setTimeout(() => spawnAccount(accountName, isLoginMode, retry + 1), retryDelay);
+            retry++;
+            setTimeout(() => handleConnection(retry), retryDelay);
         }
     });
+
+    setTimeout(() => {
+        if (!child.connected && isRunning) {
+            logger.error('❌ Connection failed during timeout (10 seconds)');
+            child.kill();
+            handleConnection(retry + 1);
+        }
+    }, 10000);
 }
 
-function killAccount(name) {
-    const entry = runningAccounts.get(name);
-    if (!entry) return;
-    entry.child.kill();
-    runningAccounts.delete(name);
-    logger.info(`🛑 [${name}] stopped.`);
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// ══════════════════════════════════════════════════════════════
-// البداية
-// ══════════════════════════════════════════════════════════════
+process.on('SIGINT', () => process.exit());
+
 logger.info('Anastasia Multi-Session Manager 🪐🌀');
-
-let masterName = accountUtils.getCurrentAccountName();
-let isLoginMode = false;
-
-if (!masterName) {
-    isLoginMode = true;
-    masterName  = 'default';
-    logger.info('🔒 Securing accounts...');
-    accountUtils.lockAllAccounts();
-} else {
-    const potentialPath = join(accountsDir, masterName);
-    if (!fs.existsSync(potentialPath)) {
-        logger.warn(`⚠️ Account [${masterName}] not found! Reverting to Login Mode.`);
-        accountUtils.logoutAccount();
-        accountUtils.lockAllAccounts();
-        isLoginMode = true;
-        masterName  = 'default';
-    }
-}
-
-// شغّل الحساب الرئيسي
-spawnAccount(masterName, isLoginMode, 0);
-
-// شغّل كل الحسابات الفرعية المحفوظة تلقائياً
-if (!isLoginMode) {
-    const subFile = join(accountsDir, 'sub_accounts.json');
-    if (fs.existsSync(subFile)) {
-        try {
-            const subs = JSON.parse(fs.readFileSync(subFile, 'utf8'));
-            for (const subName of subs) {
-                if (subName === masterName) continue;
-                if (fs.existsSync(join(accountsDir, subName))) {
-                    await delay(2000); // فترة بين كل تشغيل
-                    spawnAccount(subName, false, 0);
-                }
-            }
-        } catch {}
-    }
-}
-
-process.on('SIGINT', () => {
-    for (const [name, { child }] of runningAccounts) {
-        child.kill();
-    }
-    process.exit();
-});
+handleConnection();
