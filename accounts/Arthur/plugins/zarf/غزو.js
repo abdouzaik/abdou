@@ -1,10 +1,7 @@
 // ══════════════════════════════════════════════════════════════
-//  لعبة الغزو الفضائي — غزو.js (Ultra Edition 7.0)
-//  ✅ LID→JID mentions (twice map)
-//  ✅ Anti-Self-Kick (bot filtered from all IDs)
-//  ✅ Elite & Admin immunity
-//  ✅ Memory leak fix (try/finally on every listener)
-//  ✅ Fisher-Yates, DRY loop, return-based elimination
+//  لعبة الغزو الفضائي — غزو.js (Ultra Edition 7.1)
+//  ✅ منشن أزرق حقيقي مطابق لنظام النخبة (elite.js)
+//  ✅ التخلص من مشكلة المنشن الرمادي والإيموجي 👤
 // ══════════════════════════════════════════════════════════════
 import fs   from "fs";
 import path from "path";
@@ -16,403 +13,260 @@ const DATA_DIR  = path.join(__dirname, "../../nova/data");
 const wait    = ms  => new Promise(r => setTimeout(r, ms));
 const pick    = arr => arr[Math.floor(Math.random() * arr.length)];
 
-// ── رقم نظيف من أي JID (يتجاهل :0 وما بعده) ─────────────────
+// ── رقم نظيف من أي JID (لصنع منشن صريح) ─────────────────────
 const numOf   = jid => jid ? jid.split("@")[0].split(":")[0] : "";
 
-// ── رقم هاتف حقيقي: 7-13 خانة. LID دائماً أطول ──────────────
-const isPhone = jid => { const n = numOf(jid); return n.length >= 7 && n.length <= 13; };
+// ── Cache بنية elite-pro.json لكل قروب ──────────────────────
+const cachePath = chatId =>
+    path.join(DATA_DIR, "group_members_" + chatId.replace(/[^\w]/g, "") + ".json");
 
-// ── نص المنشن: @رقم لو phone، وإلا 👤 ───────────────────────
-const display = jid => isPhone(jid) ? `@${numOf(jid)}` : "👤";
-
-// ── Fisher-Yates ───────────────────────────────────────────────
-function shuffle(arr) {
-    const a = [...arr];
-    for (let i = a.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
+function getGroupCache(chatId) {
+    const p = cachePath(chatId);
+    if (!fs.existsSync(p)) return { jids:[], lids:[], twice:{} };
+    try { return JSON.parse(fs.readFileSync(p, "utf-8")); }
+    catch { return { jids:[], lids:[], twice:{} }; }
 }
 
-// ══════════════════════════════════════════════════════════════
-//  Cache — بنية elite-pro.json (jids / lids / twice)
-// ══════════════════════════════════════════════════════════════
-const cachePath  = chatId =>
-    path.join(DATA_DIR, "group_members_" + chatId.replace(/[^\w]/g,"_") + ".json");
-
-const readCache  = chatId => {
-    try {
-        const p = cachePath(chatId);
-        return fs.existsSync(p)
-            ? JSON.parse(fs.readFileSync(p,"utf8"))
-            : { jids:[], lids:[], twice:{} };
-    } catch { return { jids:[], lids:[], twice:{} }; }
-};
-const writeCache = (chatId, d) => {
-    try {
-        fs.mkdirSync(DATA_DIR, { recursive:true });
-        fs.writeFileSync(cachePath(chatId), JSON.stringify(d,null,2), "utf8");
-    } catch {}
-};
-
-// ── بناء cache بـ chunks (10 طلب / 100ms) ────────────────────
-async function buildGroupCache(sock, chatId, participants) {
-    const cache   = readCache(chatId);
-    const updated = { jids:[...cache.jids], lids:[...cache.lids], twice:{...cache.twice} };
-    const CHUNK = 10, DELAY = 100;
-
-    for (let i = 0; i < participants.length; i += CHUNK) {
-        await Promise.all(participants.slice(i, i+CHUNK).map(async p => {
-            const raw = p.id;
-
-            if (raw.endsWith("@s.whatsapp.net") && isPhone(raw)) {
-                if (!updated.jids.includes(raw)) {
-                    try {
-                        const [info] = await sock.onWhatsApp(raw).catch(() => [{}]);
-                        updated.jids.push(raw);
-                        if (info?.exists && info.lid && !updated.lids.includes(info.lid)) {
-                            updated.lids.push(info.lid);
-                            updated.twice[raw]      = info.lid;
-                            updated.twice[info.lid] = raw;
-                        }
-                    } catch { updated.jids.push(raw); }
-                }
-
-            } else if (raw.endsWith("@lid") && !updated.lids.includes(raw)) {
-                try {
-                    const [info] = await sock.onWhatsApp(raw).catch(() => [{}]);
-                    if (info?.exists && info.jid?.endsWith("@s.whatsapp.net")) {
-                        if (!updated.jids.includes(info.jid)) updated.jids.push(info.jid);
-                        updated.lids.push(raw);
-                        updated.twice[raw]       = info.jid;
-                        updated.twice[info.jid]  = raw;
-                    } else {
-                        updated.lids.push(raw);
-                    }
-                } catch { updated.lids.push(raw); }
-            }
-        }));
-        if (i + CHUNK < participants.length) await wait(DELAY);
-    }
-    writeCache(chatId, updated);
-    return updated;
+function resolveJid(id, cache) {
+    if (!id) return id;
+    if (id.endsWith("@s.whatsapp.net")) return id;
+    if (id.endsWith("@lid")) return cache.twice[id] || id;
+    return id;
 }
 
-// ── LID → phone JID عبر twice map ────────────────────────────
-const resolveJid = (raw, cache) =>
-    isPhone(raw) ? raw : (raw.endsWith("@lid") && cache.twice[raw]) || null;
+const activeGames = new Map();
 
-// ── مصفوفة mentions مضمونة: phoneJid + raw (لضمان اللون الأزرق) ─
-const mentionSet = (phoneJid, rawJid) =>
-    [...new Set([phoneJid, rawJid].filter(Boolean))];
+// ── دالة معالجة الجولات ───────────────────────────────────────
+async function runRound(sock, chatId, players, session, type) {
+    const round   = session.round;
+    let codes     = [];
+    while(codes.length < 3) codes.push(String(Math.floor(1000 + Math.random() * 9000)));
+    codes = [...new Set(codes)];
 
-// ══════════════════════════════════════════════════════════════
-//  runRound — تسجيل الردود مع try/finally لمنع memory leak
-// ══════════════════════════════════════════════════════════════
-async function runRound(sock, chatId, players, validCodes) {
+    let msgText = "";
+    let validCodes = codes;
+
+    if (type === "blackhole") {
+        msgText = `━━━━━━━━━━━━━━━━━━━\n🕳️ *الجولة ${round} | ثـقـب أسـود!*\n━━━━━━━━━━━━━━━━━━━\nالناجون: ${players.length}\n\nاكتب الكود **معكوساً** للنجاة!\n*${codes[0]}*\n\n⏱️ لديك *15 ثانية*`;
+        validCodes = [ codes[0].split("").reverse().join("") ];
+    } else if (type === "shield") {
+        msgText = `━━━━━━━━━━━━━━━━━━━\n🛡️ *الجولة ${round} | درع حـمـايـة!*\n━━━━━━━━━━━━━━━━━━━\nالناجون: ${players.length}\n\nأسرع شخص يكتب الكود سيحصل على حصانة!\n*${codes[0]}* *${codes[1]}* *${codes[2]}*\n\n⏱️ لديك *15 ثانية*`;
+    } else {
+        msgText = `━━━━━━━━━━━━━━━━━━━\n👾 *الجولة ${round}*\n━━━━━━━━━━━━━━━━━━━\nالناجون: ${players.length}\n\nاكتب أحد هذه الأكواد:\n*${codes[0]}* *${codes[1]}* *${codes[2]}*\n\n⏱️ لديك *15 ثانية*`;
+    }
+
+    await sock.sendMessage(chatId, { text: msgText });
+
     const roundStart = Date.now();
     const responded  = new Map();
 
-    const rl = ({ messages }) => {
-        const m = messages[0];
-        if (!m?.message || m.key.remoteJid !== chatId) return;
-        const txt     = (m.message.conversation || m.message.extendedTextMessage?.text || "").trim();
-        const fromNum = numOf(m.key.participant || m.key.remoteJid);
-        const matchP  = players.find(p => numOf(p) === fromNum);
-        if (validCodes.includes(txt) && matchP && !responded.has(matchP)) {
-            responded.set(matchP, Date.now() - roundStart);
-            sock.sendMessage(chatId, { react:{ text:"✅", key:m.key } }).catch(() => {});
+    const listener = ({ messages }) => {
+        const m = messages?.[0];
+        if (!m?.message || m.key.remoteJid !== chatId || m.key.fromMe) return;
+        const jid  = m.key.participant || m.key.remoteJid;
+        const text = (m.message.conversation || m.message.extendedTextMessage?.text || "").trim();
+
+        if (validCodes.includes(text) && players.includes(jid) && !responded.has(jid)) {
+            responded.set(jid, Date.now() - roundStart);
+            sock.sendMessage(chatId, { react: { text: "✅", key: m.key } }).catch(()=>{});
         }
     };
 
-    sock.ev.on("messages.upsert", rl);
-    try {
-        await wait(10000);
-    } finally {
-        sock.ev.off("messages.upsert", rl); // ✅ يُزال دائماً حتى لو خطأ
+    sock.ev.on("messages.upsert", listener);
+    try { await wait(15000); } finally { sock.ev.off("messages.upsert", listener); }
+
+    for (const [jid, ms] of responded.entries()) {
+        if (!session.speedLog[jid]) session.speedLog[jid] = [];
+        session.speedLog[jid].push(ms);
     }
+
     return responded;
 }
 
-// ══════════════════════════════════════════════════════════════
-//  processElimination — طرد + return (لا side effects)
-//  - يحمي المشرفين وأصحاب الدرع
-//  - 20% من غير المجاوبين (min 1)
-//  - لو الكل أجاب: أبطأ لاعب غير محمي
-// ══════════════════════════════════════════════════════════════
+// ── دالة الطرد (ترجع قائمة من طُردوا فعلياً) ──────────────────
 async function processElimination(sock, chatId, players, responded, session, cache, adminNums) {
-    const canKick = p => !adminNums.has(numOf(p)) && !session.shielded.has(p);
-
-    const didNot = players.filter(p => !responded.has(p) && canKick(p));
-
+    const didNot = players.filter(p => !responded.has(p) && !adminNums.has(numOf(p)) && !session.shielded.has(p));
     let targets = [];
+
     if (didNot.length > 0) {
         const kickCount = Math.max(1, Math.ceil(didNot.length * 0.2));
-        targets = shuffle(didNot).slice(0, kickCount);
+        targets = [...didNot].sort(() => Math.random()-0.5).slice(0, kickCount);
     } else {
         const eligible = players
-            .filter(canKick)
+            .filter(p => !adminNums.has(numOf(p)) && !session.shielded.has(p))
             .map(p => ({ p, t: responded.get(p) ?? 99999 }))
             .sort((a,b) => b.t - a.t);
         if (eligible.length > 0) targets = [eligible[0].p];
     }
 
-    const ABDUCT_MSGS = [
-        j => `☄️ *تم اختطاف اللاعب:* ${display(j)}`,
-        j => `👾 *تم سحب:* ${display(j)} _بسبب بطء الاستجابة_`,
-        j => `🛸 *الاختطاف تم بنجاح لـ:* ${display(j)}`,
-        j => `🌌 *الضحية الحالية:* ${display(j)} _غادر الكوكب_`,
-    ];
-
     for (const target of targets) {
-        await sock.groupParticipantsUpdate(chatId, [target], "remove")
+        await sock.groupParticipantsUpdate(chatId,[target],"remove")
             .catch(err => console.log(`[Kick]: ${err.message}`));
+        
         const phoneJid = resolveJid(target, cache) || target;
+        
+        // استخدام المنشن الصريح (مثل النخبة)
         await sock.sendMessage(chatId, {
-            text:     pick(ABDUCT_MSGS)(phoneJid),
-            mentions: mentionSet(phoneJid, target),
+            text: pick([
+                `☄️ *تم اختطاف اللاعب:* @${numOf(phoneJid)}`,
+                `👾 *تم سحب:* @${numOf(phoneJid)} _بسبب بطء الاستجابة_`,
+                `🛸 *الاختطاف تم بنجاح لـ:* @${numOf(phoneJid)}`,
+                `🌌 *الضحية الحالية:* @${numOf(phoneJid)} _اختفى في الفضاء_`,
+                `⚡ *الأبطأ هذه المرة هو:* @${numOf(phoneJid)}`,
+                `🔭 *تم رصد:* @${numOf(phoneJid)} _وسحبه للمركبة_`,
+            ]),
+            mentions: [...new Set([phoneJid, target])]
         });
         await wait(500);
     }
-
-    for (const p of players) {
-        if (!targets.includes(p) && responded.has(p))
-            session.speedLog[p].push(responded.get(p));
-    }
-
     return targets;
 }
 
-// ── أنواع الأحداث ──────────────────────────────────────────────
-const EVENTS = ["normal","normal","normal","blackhole","shield"];
-
-const activeGames = new Map();
-
 // ══════════════════════════════════════════════════════════════
-export const NovaUltra = {
-    command:"غزو", description:"لعبة الغزو الفضائي Ultra",
-    group:true, elite:"off",
+export const InvasionGame = {
+    command: "غزو",
+    description: "لعبة البقاء للأسرع مع دعم LIDs",
+    group: true,
+    elite: "off",
 };
 
-export async function execute({ sock, msg, args }) {
-    const chatId   = msg.key.remoteJid;
+export async function execute({ sock, msg, args, sender }) {
+    const chatId = msg.key.remoteJid;
+    const pfx    = global._botConfig?.prefix || ".";
+    const subCmd = args?.[0]?.trim();
 
-    // ── رقم البوت المستخلص من sock.user بدقة (Anti-Self-Kick) ──
-    const botId    = sock.user?.id || "";
-    const botNum   = numOf(botId);
-    const botLid   = sock.user?.lid ? numOf(sock.user.lid) : null;
-
-    const ownerNum = (global._botConfig?.owner || "213540419314").replace(/\D/g,"");
-
-    if (args?.[0] === "وقف") {
-        if (!activeGames.has(chatId)) return sock.sendMessage(chatId,{text:"❌ _لا توجد جولة قائمة._"});
-        activeGames.get(chatId).stop = true;
-        return sock.sendMessage(chatId,{react:{text:"🛑",key:msg.key}});
-    }
-    if (activeGames.has(chatId)) return sock.sendMessage(chatId,{text:"⚠️ _الغزو مستمر بالفعل!_"});
-
-    const metadata = await sock.groupMetadata(chatId).catch(() => null);
-    if (!metadata) return;
-
-    await sock.sendMessage(chatId,{text:"🛸 _جاري تحديد الأعضاء..._"});
-    const cache = await buildGroupCache(sock, chatId, metadata.participants);
-
-    // ── قائمة أرقام المشرفين ─────────────────────────────────
-    const adminNums = new Set(
-        metadata.participants.filter(p => p.admin).map(p => numOf(p.id))
-    );
-
-    // ── قائمة النخبة ──────────────────────────────────────────
-    let eliteNums = new Set();
-    try {
-        // getElites() يرجع lids أو getEliteList() يرجع jids
-        const list = typeof sock.getElites === "function"
-            ? (sock.getElites() || [])
-            : typeof sock.getEliteList === "function"
-                ? (await sock.getEliteList().catch(() => [])) || []
-                : [];
-        // قراءة elite-pro.json مباشرة كـ fallback
-        let epJids = [], epLids = [];
+    if (subCmd === "وقف") {
+        if (!activeGames.has(chatId)) return sock.sendMessage(chatId,{text:"❌ لا يوجد غزو نشط."});
         try {
-            const epPath = path.join(__dirname, "../../handlers/elite-pro.json");
-            if (fs.existsSync(epPath)) {
-                const ep = JSON.parse(fs.readFileSync(epPath,"utf8"));
-                epJids = (ep.jids||[]).map(numOf);
-                epLids = (ep.lids||[]).map(numOf);
-            }
+            const meta   = await sock.groupMetadata(chatId);
+            const admins = meta.participants.filter(p=>p.admin).map(p=>numOf(p.id));
+            const sNum   = numOf(sender?.pn || msg.key.participant || "");
+            if (!msg.key.fromMe && !admins.includes(sNum))
+                return sock.sendMessage(chatId,{text:"❌ للمشرفين فقط."});
         } catch {}
-        eliteNums = new Set([...list.map(numOf), ...epJids, ...epLids]);
-    } catch {}
+        activeGames.get(chatId).stop = true;
+        return sock.sendMessage(chatId,{text:"🛑 تم إيقاف الغزو."});
+    }
 
-    const allRaw = metadata.participants.map(p => p.id);
+    if (activeGames.has(chatId))
+        return sock.sendMessage(chatId,{text:`⚠️ الغزو شغال. لإيقافه: *${pfx}غزو وقف*`});
 
-    // ── فلترة اللاعبين: يستثني البوت (phone+LID) + أونر + نخبة + مشرفين ──
+    let meta;
+    try { meta = await sock.groupMetadata(chatId); }
+    catch { return sock.sendMessage(chatId,{text:"❌ تعذر جلب بيانات المجموعة."}); }
+
+    const botNum = numOf(sock.user.id);
+    const botIsAdmin = meta.participants.some(p => numOf(p.id) === botNum && p.admin);
+    if (!botIsAdmin) return sock.sendMessage(chatId,{text:"❌ البوت يحتاج إشراف."});
+
+    let elitesList = [];
+    try { elitesList = sock.getElites ? (sock.getElites() || []) : []; } catch {}
+
+    const adminNums = new Set(meta.participants.filter(p=>p.admin).map(p=>numOf(p.id)));
+    const cache = getGroupCache(chatId);
+    let allRaw = meta.participants.map(p=>p.id);
+
     let players = [];
     for (const raw of allRaw) {
         const phone = resolveJid(raw, cache);
         const n     = numOf(phone || raw);
-
-        const isBot    = n === botNum || (botLid && n === botLid);
-        const isOwner  = n === ownerNum;
-        const isAdmin  = adminNums.has(n);
-        const isElite  = eliteNums.has(n);
-
-        if (isBot || isOwner || isAdmin || isElite) continue;
+        const rawN  = numOf(raw);
+        if (n === botNum || rawN === botNum || raw === sock.user?.id) continue;
+        if (adminNums.has(n) || adminNums.has(rawN)) continue;
+        if (elitesList.some(e => numOf(e) === n || numOf(e) === rawN)) continue;
         players.push(phone || raw);
     }
 
     if (players.length < 2)
-        return sock.sendMessage(chatId,{text:"❌ *العدد غير كافي!*\n_اللعبة تحتاج شخصين عاديين على الأقل._"});
+        return sock.sendMessage(chatId,{text:"❌ نحتاج على الأقل لاعبَين (غير مشرفين/نخبة) لبدء اللعبة."});
 
-    const session = { stop:false, round:1, speedLog:{}, shielded:new Set(), startTime:Date.now() };
+    const session = { stop: false, round: 1, speedLog: {}, shielded: new Set() };
     activeGames.set(chatId, session);
-    players.forEach(p => { session.speedLog[p] = []; });
 
     try {
-        // البداية: منشن مخفي — النص لا يحتوي أرقاماً
         await sock.sendMessage(chatId, {
-            text:
-`🛸 *--- إنـذار بـغـزو فـضـائـي ---*
-
-_تم رصد مركبات تقترب من المجموعة..._
-_القوانين:_ \`أسرع من يكتب الكود ينجو، والأبطأ يطرد!\`
-_📊 المشاركون:_ *${players.length}* لاعب
-🛡️ _المشرفون والنخبة محميون_
-
-⏳ _سيتم إطلاق أول كود بعد_ *15 ثانية*`,
-            mentions: allRaw, // الجميع يتلقون إشعار صامت
+            text: `🛸 *غزو فضائي — المنطقة 51*\n\nالمركبة الفضائية تقترب...\n⏳ يبدأ الغزو بعد *15 ثانية*\nاللاعبون المشاركون: ${players.length}`,
         });
         await wait(15000);
 
-        // ══ حلقة اللعب ═══════════════════════════════════════
-        while (players.length > 1 && !session.stop) {
-            const eventType = pick(EVENTS);
-            let roundMsg = "";
-            let validCodes = [];
-            let shieldRound = false;
-
-            // بناء رسالة الجولة حسب النوع
-            if (eventType === "blackhole") {
-                const code = Math.floor(1000+Math.random()*9000).toString();
-                const rev  = code.split("").reverse().join("");
-                validCodes = [rev];
-                roundMsg =
-`🕳️ *الجولة [ ${session.round} ] — ثـقـب أسـود!*
-_الناجون:_ *${players.length}*
-
-⚠️ _الكود مقلوب! اكتبه معكوساً:_
-\`${code}\` ← اكتب: \`${rev}\`
-
-⏱️ *10 ثوانٍ فقط!*`;
-
-            } else if (eventType === "shield") {
-                validCodes = [
-                    Math.floor(1000+Math.random()*9000).toString(),
-                    Math.floor(1000+Math.random()*9000).toString(),
-                ];
-                shieldRound = true;
-                roundMsg =
-`🛡️ *الجولة [ ${session.round} ] — درع الحماية!*
-_الناجون:_ *${players.length}*
-
-⚡ _أسرع مستجيب يحصل على حماية من الطرد في الجولة القادمة!_
-\`${validCodes[0]}\`  -  \`${validCodes[1]}\`
-
-⏱️ *10 ثوانٍ فقط!*`;
-
-            } else {
-                validCodes = [
-                    Math.floor(1000+Math.random()*9000).toString(),
-                    Math.floor(1000+Math.random()*9000).toString(),
-                ];
-                roundMsg =
-`👾 *الـجـولـة [ ${session.round} ]*
-_الناجون المتبقون:_ *${players.length}*
-
-_اكتب أحد الأكواد التالية:_
-\`${validCodes[0]}\`  -  \`${validCodes[1]}\`
-
-⏱️ *10 ثوانٍ فقط!*`;
-            }
-
-            await sock.sendMessage(chatId, { text: roundMsg });
-
-            // تسجيل الردود (try/finally مدمج في runRound)
-            const responded = await runRound(sock, chatId, players, validCodes);
+        while (players.length > 1) {
             if (session.stop) break;
 
-            // الطرد أولاً — الدروع القديمة لا تزال فعّالة
-            const eliminated = await processElimination(
-                sock, chatId, players, responded, session, cache, adminNums
-            );
+            let roundType = "normal";
+            const r = Math.random();
+            if (r < 0.20) roundType = "blackhole";
+            else if (r < 0.40) roundType = "shield";
+
+            const shieldRound = (roundType === "shield");
+            const responded = await runRound(sock, chatId, players, session, roundType);
+
+            if (session.stop) break;
+
+            // 1. عملية الطرد
+            const eliminated = await processElimination(sock, chatId, players, responded, session, cache, adminNums);
             players = players.filter(p => !eliminated.includes(p));
 
-            // مسح الدروع المستهلكة
+            // 2. مسح الدروع المستهلكة
             session.shielded.clear();
 
-            // إعطاء درع جديد بعد المسح — يبقى للجولة القادمة
+            // 3. إعطاء درع جديد إن وجد
             if (shieldRound && responded.size > 0) {
-                const fastest = [...responded.entries()].sort((a,b) => a[1]-b[1])[0][0];
+                const fastest = [...responded.entries()].sort((a,b)=>a[1]-b[1])[0][0];
                 if (players.includes(fastest)) {
                     session.shielded.add(fastest);
                     const shPhone = resolveJid(fastest, cache) || fastest;
+                    // منشن صريح للدرع
                     await sock.sendMessage(chatId, {
-                        text:     `🛡️ *${display(shPhone)} حصل على درع الحماية للجولة القادمة!*`,
-                        mentions: mentionSet(shPhone, fastest),
+                        text: `🛡️ *@${numOf(shPhone)} حصل على درع الحماية للجولة القادمة!*`,
+                        mentions: [...new Set([shPhone, fastest])],
                     });
                 }
             }
 
-            if (players.length > 1 && !session.stop) {
-                await sock.sendMessage(chatId,{
-                    text:`⏳ _استعدوا للجولة التالية... (المتبقون: ${players.length})_`,
-                });
-                await wait(5000);
-            }
+            if (players.length <= 1) break;
+
+            await sock.sendMessage(chatId, { text: `⏳ الجولة القادمة بعد *10 ثوانٍ* — الناجون: ${players.length}` });
+            await wait(10000);
             session.round++;
         }
 
-        // ── النتائج ────────────────────────────────────────────
         if (session.stop) {
             await sock.sendMessage(chatId,{text:"🛑 *توقف الغزو بناءً على طلب القائد.*"});
-
         } else if (players.length === 1) {
-            const winner = players[0];
-            const phoneW = resolveJid(winner, cache) || winner;
-            const WIN = [
-                j => `🏆 *تـهـانـيـنـا!* ${display(j)} _هو الناجي الوحيد والبطل._`,
-                j => `🥇 *الـبـطـل الـخـارق:* ${display(j)} _صمد أمام الغزو الفضائي._`,
-            ];
-            const top = Object.entries(session.speedLog)
-                .map(([jid,ts]) => ({
-                    jid,
-                    phone: resolveJid(jid,cache) || jid,
-                    avg:   ts.length ? ts.reduce((a,b)=>a+b,0)/ts.length : 99999,
-                }))
-                .filter(x => x.avg < 99999)
-                .sort((a,b) => a.avg - b.avg)
-                .slice(0,3);
+            const winner  = players[0];
+            const phoneW  = resolveJid(winner, cache) || winner;
+            
+            const winText = pick([
+                `🏆 *تـهـانـيـنـا!* @${numOf(phoneW)} _هو الناجي الوحيد والبطل._`,
+                `🥇 *الـبـطـل الـخـارق:* @${numOf(phoneW)} _صمد أمام الغزو الفضائي._`,
+            ]);
 
-            const statsText = top.map((x,i) =>
-                `${["🥇","🥈","🥉"][i]} *${display(x.phone)}* : \`${(x.avg/1000).toFixed(2)}s\``
-            ).join("\n");
+            const top = Object.entries(session.speedLog)
+                .map(([jid,ts])=>({ jid, phone:resolveJid(jid,cache)||jid, avg:ts.length?ts.reduce((a,b)=>a+b,0)/ts.length:99999 }))
+                .filter(x=>x.avg<99999).sort((a,b)=>a.avg-b.avg).slice(0,3);
+
+            let statsText = "";
+            let mentionJids = [phoneW, winner];
+
+            top.forEach((x, i) => {
+                const medals = ["🥇","🥈","🥉"];
+                // منشن صريح للإحصائيات
+                statsText += `${medals[i]} *@${numOf(x.phone)}* : \`${(x.avg/1000).toFixed(2)}s\`\n`;
+                mentionJids.push(x.phone, x.jid);
+            });
 
             await sock.sendMessage(chatId,{
-                text: `${pick(WIN)(phoneW)}\n\n⚡ *تـرتـيـب الأسـرع:*\n${statsText||"_لا توجد بيانات_"}`,
-                mentions: [...new Set([phoneW, winner, ...top.map(x=>x.phone), ...top.map(x=>x.jid)])],
+                text:`${winText}\n\n⚡ *تـرتـيـب الأسـرع:*\n${statsText.trim() || "_لا توجد بيانات_"}`,
+                mentions: [...new Set(mentionJids)]
             });
 
         } else {
-            await sock.sendMessage(chatId,{text:"💀 *انتهى الغزو بإبادة الجميع.*"});
+            await sock.sendMessage(chatId,{text:"💀 *انتهى الغزو*\nتم اختطاف الجميع. لا يوجد ناجين."});
         }
 
-    } catch(err) {
-        console.error("[الغزو] خطأ:", err);
-        await sock.sendMessage(chatId,{text:"❌ _خطأ تقني أدى لتوقف الغزو._"});
+    } catch (err) {
+        console.error("[غزو]", err);
     } finally {
         activeGames.delete(chatId);
     }
 }
-
-export default { NovaUltra, execute };
