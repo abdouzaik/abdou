@@ -253,7 +253,7 @@ const readStats  = () => {
 const writeStats = d => { _statsCache = d; _statsDirty = true; };
 // flush async كل دقيقة من setInterval
 const flushStats = () => {
-    if (_statsDirty && _statsCache) { writeJSON(STATS_FILE, _statsCache); _statsDirty = false; }
+    if (_statsDirty && _statsCache) { void writeJSON(STATS_FILE, _statsCache); _statsDirty = false; }
 };
 
 
@@ -276,7 +276,7 @@ function loadPluginsCfg() {
 }
 
 function savePluginsCfg() {
-    writeJSON(PLUGINS_CFG_FILE, _pluginsCfg || {});
+    void writeJSON(PLUGINS_CFG_FILE, _pluginsCfg || {});
 }
 
 // ── atomic file write: كتابة آمنة عبر tmp + rename ──
@@ -583,7 +583,7 @@ function registerWelcomeListener(sock) {
         try {
             const wf = grpFile('welcome', id);
             if (!fs.existsSync(wf)) return;
-            const { text: wt } = readJSON(wf, {});
+            const { text: wt } = readJSONSync(wf, {});
             if (!wt) return;
 
             // جلب صورة القروب مرة واحدة مهما كان عدد الجدد
@@ -622,7 +622,7 @@ function registerBanListener(sock) {
     ev.on('group-participants.update', async ({ id, participants, action }) => {
         if (action !== 'add') return;
         try {
-            const bans = readJSON(grpFile('bans', id), []);
+            const bans = readJSONSync(grpFile('bans', id), []);
             if (!bans.length) return;
             for (const jid of participants) {
                 const num = normalizeJid(jid);
@@ -1327,9 +1327,9 @@ async function slashCommandHandler(sock, msg) {
             if (!target) return reply('↩️ منشن العضو أو رد على رسالته أو اكتب رقمه.');
             await tryDo(async () => {
                 await sock.groupParticipantsUpdate(chatId, [target], 'remove');
-                const bans = readJSON(grpFile('bans', chatId), []);
+                const bans = readJSONSync(grpFile('bans', chatId), []);
                 const tN = normalizeJid(target);
-                if (!bans.some(b => normalizeJid(b) === tN)) { bans.push(target); writeJSON(grpFile('bans', chatId), bans); }
+                if (!bans.some(b => normalizeJid(b) === tN)) { bans.push(target); void writeJSON(grpFile('bans', chatId), bans); }
                 await replyM('⛔ تم حظر @' + tN + ' من المجموعة', [target]);
             }, '🔨');
             return;
@@ -1340,7 +1340,7 @@ async function slashCommandHandler(sock, msg) {
             if (!target) return reply('↩️ منشن العضو أو اكتب رقمه.');
             const tN2 = normalizeJid(target);
             const bf  = grpFile('bans', chatId);
-            writeJSON(bf, readJSON(bf, []).filter(b => normalizeJid(b) !== tN2));
+            void writeJSON(bf, readJSONSync(bf, []).filter(b => normalizeJid(b) !== tN2));
             reactOk(sock, msg);
             await replyM('☑️ تم رفع الحظر عن @' + tN2, [target]);
             return;
@@ -1531,7 +1531,7 @@ async function slashCommandHandler(sock, msg) {
             const wf = grpFile('welcome', chatId);
             if (rest === 'عرض') {
                 if (!fs.existsSync(wf)) return reply('❌ لم يُضبط ترحيب بعد.');
-                const { text: wt } = readJSON(wf, {});
+                const { text: wt } = readJSONSync(wf, {});
                 return reply('📋 *رسالة الترحيب:*\n\n' + wt);
             }
             if (rest === 'حذف') {
@@ -1540,7 +1540,7 @@ async function slashCommandHandler(sock, msg) {
                 return;
             }
             if (rest) {
-                writeJSON(wf, { text: rest });
+                void writeJSON(wf, { text: rest });
                 reactOk(sock, msg);
                 await reply('☑️ تم حفظ رسالة الترحيب.\nاستخدم {name} للاسم و {number} للرقم.');
                 return;
@@ -1552,7 +1552,7 @@ async function slashCommandHandler(sock, msg) {
             const rf = grpFile('rules', chatId);
             if (rest === 'عرض') {
                 if (!fs.existsSync(rf)) return reply('❌ لم تُضبط قوانين بعد.');
-                const { text: rt } = readJSON(rf, {});
+                const { text: rt } = readJSONSync(rf, {});
                 return reply('📜 *قوانين المجموعة:*\n\n' + rt);
             }
             if (rest === 'حذف') {
@@ -1561,7 +1561,7 @@ async function slashCommandHandler(sock, msg) {
                 return;
             }
             if (rest) {
-                writeJSON(rf, { text: rest });
+                void writeJSON(rf, { text: rest });
                 reactOk(sock, msg);
                 await reply('☑️ تم حفظ القوانين.');
                 return;
@@ -1890,7 +1890,7 @@ async function slashCommandHandler(sock, msg) {
         if (cmd === 'كلمات') {
             if (!isGroup) return reply('❌ هذا الامر للمجموعات فقط.');
             const bf = grpFile('badwords', chatId);
-            let words = readJSON(bf, []);
+            let words = readJSONSync(bf, []);
             if (rest === 'عرض' || !rest) {
                 const list = words.length ? words.map((w,i) => (i+1) + '. ' + w).join('\n') : 'لا يوجد كلمات ممنوعة.';
                 return reply('🚫 *الكلمات الممنوعة:*\n\n' + list);
@@ -1898,13 +1898,13 @@ async function slashCommandHandler(sock, msg) {
             if (rest.startsWith('اضف ') || rest.startsWith('اضافة ')) {
                 const w = rest.split(' ').slice(1).join(' ').trim().toLowerCase();
                 if (!w) return reply('↩️ اكتب الكلمة: /كلمات اضف [كلمة]');
-                if (!words.includes(w)) { words.push(w); writeJSON(bf, words); reactOk(sock, msg); }
+                if (!words.includes(w)) { words.push(w); void writeJSON(bf, words); reactOk(sock, msg); }
                 return reply('☑️ تمت الإضافة: ' + w);
             }
             if (rest.startsWith('حذف ') || rest.startsWith('ازل ')) {
                 const w = rest.split(' ').slice(1).join(' ').trim().toLowerCase();
                 if (!w) return reply('↩️ اكتب الكلمة: /كلمات حذف [كلمة]');
-                writeJSON(bf, words.filter(x => x !== w));
+                void writeJSON(bf, words.filter(x => x !== w));
                 reactOk(sock, msg);
                 return reply('☑️ تم الحذف: ' + w);
             }
@@ -2731,7 +2731,7 @@ ${who} يستخدم النظام الآن.
     }
 
     const tryAdminAction = async (fn, emoji = '☑️') => {
-        try { await fn(); react(sock, m, emoji); return true; }
+        try { await fn(); react(sock, msg, emoji); return true; }
         catch (e) {
             const { isGroup, isAdmin, isBotAdmin } = await getAdminPerms();
             if (!isGroup)    { await update('❌ هذا الامر للمجموعات فقط.');    return false; }
@@ -2743,7 +2743,7 @@ ${who} يستخدم النظام الآن.
 
     // isOwner helper — البوت نفسه أو رقم الأونر من config
     const isOwner = () => {
-        if (m?.key?.fromMe || msg.key.fromMe) return true;
+        if (msg.key.fromMe) return true;
         const ownerNum = global._botConfig?.owner || '213540419314';
         return ownerNum && normalizeJid(sender) === normalizeJid(ownerNum);
     };
@@ -2804,7 +2804,7 @@ ${who} يستخدم النظام الآن.
 
                 // 3. قراءة مباشرة من elite-pro.json (fallback موثوق)
                 try {
-                    const ep    = readJSON(path.join(BOT_DIR, '../../handlers/elite-pro.json'), {});
+                    const ep    = readJSONSync(path.join(BOT_DIR, '../../handlers/elite-pro.json'), {});
                     const jids  = ep.jids  || [];
                     const lids  = ep.lids  || [];
                     const twice = ep.twice || {};
@@ -3524,7 +3524,7 @@ ${who} يستخدم النظام الآن.
             if (text === 'ترحيب') {
                 const wf = grpFile('welcome', chatId);
                 if (!fs.existsSync(wf)) return update('❌ لم يُضبط ترحيب بعد.\n\nاكتب *وضع ترحيب* لضبطه.\n\n🔙 *رجوع*');
-                const { text: wt } = readJSON(wf, {});
+                const { text: wt } = readJSONSync(wf, {});
                 await update(`📋 *رسالة الترحيب:*\n\n${wt}\n\nاكتب *حذف* لحذفه\n🔙 *رجوع*`);
                 pushState('ADMIN_CONTENT', showAdminContentMenu); state = 'ADMIN_WELCOME_VIEW'; return;
             }
@@ -3532,7 +3532,7 @@ ${who} يستخدم النظام الآن.
             if (text === 'قوانين') {
                 const rf = grpFile('rules', chatId);
                 if (!fs.existsSync(rf)) return update('❌ لم تُضبط قوانين بعد.\n\n🔙 *رجوع*');
-                const { text: rt } = readJSON(rf, {});
+                const { text: rt } = readJSONSync(rf, {});
                 await update(`📜 *القوانين:*\n\n${rt}\n\nاكتب *حذف* لحذفها\n🔙 *رجوع*`);
                 pushState('ADMIN_CONTENT', showAdminContentMenu); state = 'ADMIN_RULES_VIEW'; return;
             }
@@ -3542,7 +3542,7 @@ ${who} يستخدم النظام الآن.
 
     async function _s_ADMIN_SETWELCOME(text, m) {
         if (text === 'رجوع') { await goBack(); return; }
-            writeJSON(grpFile('welcome', chatId), { text });
+            void writeJSON(grpFile('welcome', chatId), { text });
             reactOk(sock, m);
             await update(`☑️ تم حفظ رسالة الترحيب.\n\n🔙 *رجوع*`);
             await sleep(800); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; return;
@@ -3550,7 +3550,7 @@ ${who} يستخدم النظام الآن.
 
     async function _s_ADMIN_SETRULES(text, m) {
         if (text === 'رجوع') { await goBack(); return; }
-            writeJSON(grpFile('rules', chatId), { text });
+            void writeJSON(grpFile('rules', chatId), { text });
             reactOk(sock, m);
             await sleep(800); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; return;
     }
@@ -3569,7 +3569,7 @@ ${who} يستخدم النظام الآن.
 
     async function _s_ADMIN_BADWORDS(text, m) {
         if (text === 'رجوع') { await goBack(); return; }
-            const bf = grpFile('badwords', chatId); let words = readJSON(bf, []);
+            const bf = grpFile('badwords', chatId); let words = readJSONSync(bf, []);
             if (text.startsWith('اضافة ')) { const w = text.slice(6).trim(); if (w) { words.push(w.toLowerCase()); writeJSON(bf, words); reactOk(sock, m); } await sleep(400); await showBadwords(); return; }
             if (text.startsWith('حذف '))   { writeJSON(bf, words.filter(x => x !== text.slice(4).trim())); reactOk(sock, m); await sleep(400); await showBadwords(); return; }
             return;
@@ -3734,7 +3734,7 @@ ${who} يستخدم النظام الآن.
             let blockJid = rawT;
             if (rawT.endsWith('@lid')) {
                 try {
-                    const ep = readJSON(path.join(BOT_DIR, '../../handlers/elite-pro.json'), {});
+                    const ep = readJSONSync(path.join(BOT_DIR, '../../handlers/elite-pro.json'), {});
                     blockJid  = (ep.twice || {})[rawT] || (normalizeJid(rawT) + '@s.whatsapp.net');
                 } catch { blockJid = normalizeJid(rawT) + '@s.whatsapp.net'; }
             }
@@ -3765,7 +3765,7 @@ ${who} يستخدم النظام الآن.
             let unblockJid = rawT2;
             if (rawT2.endsWith('@lid')) {
                 try {
-                    const ep2 = readJSON(path.join(BOT_DIR, '../../handlers/elite-pro.json'), {});
+                    const ep2 = readJSONSync(path.join(BOT_DIR, '../../handlers/elite-pro.json'), {});
                     unblockJid = (ep2.twice || {})[rawT2] || (normalizeJid(rawT2) + '@s.whatsapp.net');
                 } catch { unblockJid = normalizeJid(rawT2) + '@s.whatsapp.net'; }
             }
@@ -4394,7 +4394,7 @@ ${nav}
         let twiceMap = {};
         try {
             const ePath = path.join(BOT_DIR, '../../handlers/elite-pro.json');
-            twiceMap = readJSON(ePath, {}).twice || {};
+            twiceMap = readJSONSync(ePath, {}).twice || {};
         } catch (e) { if (e?.message) console.error('[showStats/twice]', e.message); }
 
         let participants = [];
@@ -4704,7 +4704,7 @@ ${topUsers}
 
     async function showBadwords() {
         const bf = grpFile('badwords', chatId);
-        const words = readJSON(bf, []);
+        const words = readJSONSync(bf, []);
         const list  = words.length ? words.map((w,i)=>`${i+1}. ${w}`).join('\n') : 'لا يوجد كلمات';
         await update(
 `✧━── ❝ 𝐁𝐀𝐃𝐖𝐎𝐑𝐃𝐒 ❞ ──━✧
