@@ -18,7 +18,11 @@ const wait    = ms  => new Promise(r => setTimeout(r, ms));
 const pick    = arr => arr[Math.floor(Math.random() * arr.length)];
 const numOf   = jid => jid ? jid.split("@")[0].split(":")[0] : "";
 const isPhone = jid => { const n = numOf(jid); return n.length >= 7 && n.length <= 13; };
-const display = jid => isPhone(jid) ? `@${numOf(jid)}` : "👤";
+
+// ── منشن حقيقي: @رقم دائماً في النص + JID في المصفوفة ──────────
+// واتساب يعرض اسم الشخص بالأزرق عندما يلاقي JID في mentions[]
+// حتى لو رقم اللـ LID — واتساب يربطهم تلقائياً
+const display = jid => `@${numOf(jid)}`;
 
 function shuffle(arr) {
     const a = [...arr];
