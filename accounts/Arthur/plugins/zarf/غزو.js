@@ -116,9 +116,10 @@ async function processElimination(sock, chatId, players, responded, session, cac
     for (const target of targets) {
         await sock.groupParticipantsUpdate(chatId, [target], "remove")
             .catch(err => console.log(`[Kick]: ${err.message}`));
+        const phoneJid = resolveJid(target, cache) || target;
         await sock.sendMessage(chatId, {
-            text:     pick(ABDUCT_MSGS)(resolveJid(target, cache) || target),
-            mentions: [target],
+            text:     pick(ABDUCT_MSGS)(phoneJid),
+            mentions: [...new Set([phoneJid, target])],
         });
         await wait(500);
     }
@@ -305,7 +306,7 @@ _اكتب أحد الأكواد التالية:_
                     const shPhone = resolveJid(fastest, cache) || fastest;
                     await sock.sendMessage(chatId, {
                         text:     `🛡️ *${display(shPhone)} حصل على درع الحماية للجولة القادمة!*`,
-                        mentions: [fastest],
+                        mentions: [...new Set([shPhone, fastest])],
                     });
                 }
             }
@@ -337,7 +338,7 @@ _اكتب أحد الأكواد التالية:_
             ).join("\n");
             await sock.sendMessage(chatId,{
                 text:`${pick(WIN)(phoneW)}\n\n⚡ *تـرتـيـب الأسـرع:*\n${statsText||"_لا توجد بيانات_"}`,
-                mentions:[winner,...top.map(x=>x.jid)].filter((v,i,a)=>a.indexOf(v)===i),
+                mentions:[...new Set([phoneW, winner, ...top.map(x=>x.phone), ...top.map(x=>x.jid)])],
             });
         } else {
             await sock.sendMessage(chatId,{text:"💀 *انتهى الغزو بإبادة الجميع.*"});
