@@ -2530,9 +2530,29 @@ async function execute({ sock, msg }) {
     registerWelcomeListener(sock);
 
     if (activeSessions.has(chatId)) {
-        const old = activeSessions.get(chatId);
-        sock.ev.off('messages.upsert', old.listener);
-        clearTimeout(old.timeout);
+        const old       = activeSessions.get(chatId);
+        const ownerNum  = normalizeJid(global._botConfig?.owner || '');
+        const oldSender = normalizeJid(old.sender || '');
+        const curSender = normalizeJid(sender);
+        const oldIsOwner = ownerNum && oldSender === ownerNum;
+        const curIsOwner = msg.key.fromMe || (ownerNum && curSender === ownerNum);
+
+        // أي جلسة نشطة + المستخدم الحالي ليس أونر → ارفض
+        if (!curIsOwner) {
+            const who = oldIsOwner ? 'الأونر' : 'شخص آخر';
+            const dur = old.isOwnerSess ? '5 دقائق' : 'دقيقتين';
+            await sock.sendMessage(chatId, {
+                text: `⏳ *الجلسة محجوزة*
+${who} يستخدم النظام الآن.
+تنتهي تلقائياً بعد ${dur}.`,
+            }, { quoted: msg }).catch(() => {});
+            return;
+        }
+
+        // غير ذلك → امسح القديمة وافتح جديدة
+        if (old.listener) sock.ev.off('messages.upsert', old.listener);
+        if (old.timeout)  clearTimeout(old.timeout);
+        if (typeof old.cleanupFn === 'function') try { old.cleanupFn(); } catch (_e) {}
         activeSessions.delete(chatId);
     }
 
@@ -2648,9 +2668,7 @@ async function execute({ sock, msg }) {
         // ☑️ أوامر البريفكس المباشر /امر تتجاوز الجلسة — يعالجها slashCommandHandler
         if (text.startsWith('/')) return;
 
-        // إعادة ضبط timeout عند كل تفاعل + تحديث lastActivity
-        clearTimeout(timeout);
-        timeout = setTimeout(cleanup, 300_000);
+        // تحديث lastActivity فقط — لا نُمدِّد الـ timeout (ثابت)
         const sess = activeSessions.get(chatId);
         if (sess) sess.lastActivity = Date.now();
 
@@ -4449,8 +4467,12 @@ ${list}
     // تسجيل الجلسة
     sock.ev.on('messages.upsert', listener);
 
-    const SESSION_MS = 300_000; // 5 دقائق
-    const REACT_CLEAR_BEFORE = 10_000; // امسح الرياكت قبل النهاية بـ 10 ثوانٍ
+    // أونر → 5 دقائق | غيره → 2 دقيقة (ثابت، لا يُمدَّد بالتفاعل)
+    const ownerNumS   = normalizeJid(global._botConfig?.owner || '');
+    const senderNumS  = normalizeJid(sender);
+    const isOwnerSess = msg.key.fromMe || (ownerNumS && senderNumS === ownerNumS);
+    const SESSION_MS  = isOwnerSess ? 300_000 : 120_000;
+    const REACT_CLEAR_BEFORE = 10_000;
 
     // مسح الرياكت 10 ثوانٍ قبل انتهاء الجلسة
     let reactClearTimer = setTimeout(async () => {
@@ -4483,19 +4505,7 @@ ${list}
     const _origListener = listener;
     const wrappedListener = async (args) => {
         wrappedListener.__nova_wrapped = true;
-        clearTimeout(reactClearTimer);
-        clearTimeout(timeout);
-        reactClearTimer = setTimeout(async () => {
-            try {
-                await sock.sendMessage(chatId, {
-                    react: { text: '', key: botMsgKey },
-                });
-            } catch (e) { if (e?.message) console.error('[catch]', e.message); }
-        }, SESSION_MS - REACT_CLEAR_BEFORE);
-        timeout = setTimeout(() => {
-            clearTimeout(reactClearTimer);
-            cleanup();
-        }, SESSION_MS);
+        // لا نُمدِّد الـ timer — الجلسة ثابتة مهما حصل تفاعل
         await _origListener(args);
     };
 
@@ -4503,10 +4513,12 @@ ${list}
     sock.ev.on('messages.upsert', wrappedListener);
 
     activeSessions.set(chatId, {
-        listener: wrappedListener,
+        listener:     wrappedListener,
         timeout,
-        cleanupFn: cleanup,
+        cleanupFn:    cleanup,
         lastActivity: Date.now(),
+        sender,
+        isOwnerSess,   // لتمييز نوع الجلسة
     });
 }
 

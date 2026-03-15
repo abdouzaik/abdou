@@ -1,46 +1,39 @@
 // ══════════════════════════════════════════════════════════════
-//  تصفير.js — مسح جميع جلسات نظام.js النشطة
-//  يعمل كأمر مستقل خارج نظام القوائم
+//  تصفير.js — مسح جميع جلسات نظام.js النشطة (نسخة متوافقة مع نظام 4-1)
 // ══════════════════════════════════════════════════════════════
 
-// normalizeJid — نفس messages.js بالضبط
-const normalizeJid = jid =>
+const normalizeJid = jid => 
     jid ? jid.split('@')[0].split(':')[0].replace(/\D/g, '') : '';
 
 const NovaUltra = {
     command:     'تصفير',
     description: 'مسح جميع جلسات نظام.js النشطة من الذاكرة',
-    elite:       'on',
+    elite:       'on', // متاح للنخبة/المطور فقط
     group:       false,
     prv:         false,
     lock:        'off',
 };
 
-async function execute({ sock, msg, sender, BIDS }) {
+async function execute({ sock, msg, sender }) {
     const chatId    = msg.key.remoteJid;
-    const senderJid = sender?.pn || msg.key.participant || chatId;
+    const senderJid = msg.key.participant || chatId;
 
-    // ── فحص الصلاحية: مالك البوت فقط ──────────────────────
+    // ── فحص الصلاحية: المطور فقط ──────────────────────
     const ownerNum  = normalizeJid(global._botConfig?.owner || '');
     const senderNum = normalizeJid(senderJid);
     const isOwner   = msg.key.fromMe || (ownerNum && senderNum === ownerNum);
 
     if (!isOwner) {
-        await sock.sendMessage(chatId, {
-            react: { text: '🚫', key: msg.key },
-        }).catch(() => {});
+        await sock.sendMessage(chatId, { react: { text: '🚫', key: msg.key } }).catch(() => {});
         return;
     }
 
-    // ── جلب activeSessions من global ──────────────────────
-    // نظام.js يخزّنها في const activeSessions = new Map()
-    // ليست global مباشرة — نصل إليها عبر الـ module scope
-    // الحل: نظام.js يُصدّر Map reference عبر global._activeSessions
-    const sessions = global._activeSessions;
+    // ── جلب الجلسات من global.activeSessions ───────────
+    const sessions = global.activeSessions;
 
     if (!sessions || typeof sessions.size === 'undefined') {
         await sock.sendMessage(chatId, {
-            text: '⚠️ ما وجدت جلسات — تأكد أن نظام.js يُصدّر:\n`global._activeSessions = activeSessions;`',
+            text: '⚠️ لم يتم العثور على حاوية الجلسات في الذاكرة (global.activeSessions).',
         }, { quoted: msg });
         return;
     }
@@ -49,38 +42,37 @@ async function execute({ sock, msg, sender, BIDS }) {
 
     if (count === 0) {
         await sock.sendMessage(chatId, {
-            text: '✅ لا توجد جلسات نشطة حالياً.',
+            text: '✅ لا توجد جلسات نشطة حالياً لتصفيرها.',
         }, { quoted: msg });
         return;
     }
 
-    // ── تنظيف جميع الجلسات ──────────────────────────────
+    // ── تنظيف الذاكرة ──────────────────────────────────
     let cleaned = 0;
     for (const [id, session] of sessions) {
         try {
-            // إيقاف المؤقت
+            // إيقاف مؤقت الجلسة لمنع التنفيذ اللاحق
             if (session.timeout) clearTimeout(session.timeout);
 
-            // تشغيل دالة cleanup لإزالة listener
+            // إزالة الـ listener الخاص بـ messages.upsert
+            if (session.listener) sock.ev.off('messages.upsert', session.listener);
+
+            // تشغيل دالة التنظيف الإضافية إن وجدت
             if (typeof session.cleanupFn === 'function') session.cleanupFn();
-            else if (typeof session.cleanup === 'function') session.cleanup();
 
             sessions.delete(id);
             cleaned++;
         } catch (e) {
-            // تجاهل الأخطاء الفردية وكمّل
             sessions.delete(id);
             cleaned++;
         }
     }
 
-    // ── تأكيد ──────────────────────────────────────────
-    await sock.sendMessage(chatId, {
-        react: { text: '✔️', key: msg.key },
-    }).catch(() => {});
+    // ── تأكيد النجاح ──────────────────────────────────
+    await sock.sendMessage(chatId, { react: { text: '☑️', key: msg.key } }).catch(() => {});
 
     await sock.sendMessage(chatId, {
-        text: `🧹 *تم تنظيف الذاكرة*\n\n✔️ جلسات مُسحت: *${cleaned}/${count}*\n✔️ الجلسات النشطة الآن: *${sessions.size}*`,
+        text: `🧹 *تم تنظيف الذاكرة بنجاح*\n\n✔️ الجلسات الممسوحة: *${cleaned}*\n🔄 الحالة: الذاكرة فارغة الآن.`,
     }, { quoted: msg });
 }
 
