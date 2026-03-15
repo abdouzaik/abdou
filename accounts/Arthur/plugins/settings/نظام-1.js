@@ -2776,8 +2776,9 @@ ${who} يستخدم النظام الآن.
             // المشكلة: m.key.participant قد يكون LID في واتساب الجديد
             // الحل: نحاول بـ phone JID أولاً ثم LID ثم نقرأ الملف مباشرة
             const _checkElite = async () => {
-                if (m.key.fromMe) return true;
-                // فحص الأونر
+                // البوت نفسه (من طرف البوت) أو رسالة البداية كانت fromMe
+                if (m.key.fromMe || msg.key.fromMe) return true;
+                // فحص الأونر بـ newSender
                 const ownerNum = global._botConfig?.owner || '213540419314';
                 if (ownerNum && normalizeJid(newSender) === normalizeJid(ownerNum)) return true;
 
