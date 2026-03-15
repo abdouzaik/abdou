@@ -25,7 +25,7 @@ export async function handleGeneral(ctx, m, text) {
 
         if (session.state === 'STATS') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'مسح') { writeStats({ commands:{}, users:{}, total:0 }); _statsCache = null; await update('☑️ تم المسح.'); await sleep(800); await showStats(); }
+            if (text === 'مسح') { writeStats({ commands:{}, users:{}, total:0 }); _statsCache = null; await update('☑️ تم المسح.'); await sleep(800); await showStats(ctx); }
             return;
         }
 
@@ -43,7 +43,7 @@ export async function handleGeneral(ctx, m, text) {
             if (key) {
                 const p = readProt(); p[key] = p[key]==='on'?'off':'on'; writeProt(p);
                 reactOk(sock, m);
-                await sleep(800); await showProtMenu();
+                await sleep(800); await showProtMenu(ctx);
             }
             return;
         }
@@ -53,13 +53,13 @@ export async function handleGeneral(ctx, m, text) {
         // ══════════════════════════════════════════════════
         if (session.state === 'CMDTOOLS') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'تغيير اسم')  { pushState('CMDTOOLS', showCmdTools); await update('✏️ اكتب اسم الامر الحالي:\n\n🔙 *رجوع*'); session.state = 'RENAME_WAIT'; return; }
-            if (text === 'فاحص الكود') { pushState('CMDTOOLS', showCmdTools); await update('🔍 اكتب اسم الامر:\n\n🔙 *رجوع*'); session.state = 'CODE_CHECK_WAIT'; return; }
+            if (text === 'تغيير اسم')  { pushState('CMDTOOLS', () => showCmdTools(ctx)); await update('✏️ اكتب اسم الامر الحالي:\n\n🔙 *رجوع*'); session.state = 'RENAME_WAIT'; return; }
+            if (text === 'فاحص الكود') { pushState('CMDTOOLS', () => showCmdTools(ctx)); await update('🔍 اكتب اسم الامر:\n\n🔙 *رجوع*'); session.state = 'CODE_CHECK_WAIT'; return; }
             if (text === 'مسح كاش') {
                 reactWait(sock, m);
                 try { if (global._pluginsCache) global._pluginsCache = {}; await loadPlugins().catch(()=>{}); reactOk(sock, m); await update('☑️ تم المسح.'); }
                 catch (e) { reactFail(sock, m); await update(`❌ ${e?.message}`); }
-                await sleep(800); await showCmdTools(); return;
+                await sleep(800); await showCmdTools(ctx); return;
             }
             return;
         }
@@ -70,14 +70,14 @@ export async function handleGeneral(ctx, m, text) {
             if (!fp) return update(`❌ ما وجدت: ${text}`);
             session.tmp.targetFile = fp; session.tmp.targetCmd = text;
             await update(`☑️ [ ${text} ] — اكتب الاسم الجديد:\n\n🔙 *رجوع*`);
-            pushState('RENAME_WAIT', showCmdTools); session.state = 'RENAME_NEW'; return;
+            pushState('RENAME_WAIT', () => showCmdTools(ctx)); session.state = 'RENAME_NEW'; return;
         }
 
         if (session.state === 'RENAME_NEW') {
             if (text === 'رجوع') { await goBack(); return; }
             try { updatePluginField(session.tmp.targetFile,'command',text.trim()); await loadPlugins().catch(()=>{}); } catch (e) { if (e?.message) console.error('[catch]', e.message); }
             await update(`☑️ ${session.tmp.targetCmd} ➔ ${text.trim()}`);
-            await sleep(1200); await showCmdTools(); session.state = 'CMDTOOLS'; return;
+            await sleep(1200); await showCmdTools(ctx); session.state = 'CMDTOOLS'; return;
         }
 
         if (session.state === 'CODE_CHECK_WAIT') {
@@ -111,7 +111,8 @@ export async function handleGeneral(ctx, m, text) {
         // ══════════════════════════════════════════════════
 }
 
-export async function showStats() {
+export async function showStats(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         const s = readStats();
         const topCmds = Object.entries(s.commands||{})
             .sort((a,b) => b[1]-a[1]).slice(0,5)
@@ -215,7 +216,8 @@ ${topUsers}
         });
     }
 
-export async function showProtMenu() {
+export async function showProtMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         const p = readProt(), s = k => p[k]==='on'?'☑️ مفعّل':'⛔ معطّل';
         await update(
 `✧━── ❝ 𝐏𝐑𝐎𝐓𝐄𝐂𝐓𝐈𝐎𝐍 ❞ ──━✧
@@ -236,7 +238,8 @@ export async function showProtMenu() {
     }
 
     
-export async function showCmdTools() {
+export async function showCmdTools(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         await update(
 `✧━── ❝ 𝐂𝐌𝐃 𝐓𝐎𝐎𝐋𝐒 ❞ ──━✧
 

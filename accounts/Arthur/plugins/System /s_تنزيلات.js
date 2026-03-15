@@ -31,10 +31,10 @@ export async function handleDl(ctx, m, text) {
             if (text === 'فيديو' || text === 'صوت') {
                 session.tmp.dlMode = text === 'فيديو' ? 'video' : 'audio';
                 await update(`${text==='فيديو'?'🎬':'🎵'} ارسل الرابط:\n\n🔙 *رجوع*`);
-                pushState('DL_MENU', showDlMenu); session.state = 'DL_WAIT'; return;
+                pushState('DL_MENU', () => showDlMenu(ctx)); session.state = 'DL_WAIT'; return;
             }
             if (text === 'بحث تيك') {
-                pushState('DL_MENU', showDlMenu);
+                pushState('DL_MENU', () => showDlMenu(ctx));
                 await update(
 `✧━── ❝ 𝐓𝐈𝐊𝐓𝐎𝐊 ❞ ──━✧
 
@@ -49,7 +49,7 @@ export async function handleDl(ctx, m, text) {
                 session.state = 'TT_SEARCH'; return;
             }
             if (text === 'بنترست') {
-                pushState('DL_MENU', showDlMenu);
+                pushState('DL_MENU', () => showDlMenu(ctx));
                 await update(
 `✧━── ❝ 𝐏𝐈𝐍𝐓𝐄𝐑𝐄𝐒𝐓 ❞ ──━✧
 
@@ -64,7 +64,7 @@ export async function handleDl(ctx, m, text) {
                 session.state = 'PIN_SEARCH'; return;
             }
             const url = extractUrl(text);
-            if (url) { await handleDownload(url, false, m); await sleep(1000); await showDlMenu(); return; }
+            if (url) { await handleDownload(url, false, m); await sleep(1000); await showDlMenu(ctx); return; }
             return;
         }
 
@@ -168,7 +168,7 @@ export async function handleDl(ctx, m, text) {
             const url = extractUrl(text) || (text.startsWith('http') ? text : null);
             if (!url) return update('❌ الرابط غير صحيح.\n\n🔙 *رجوع*');
             await handleDownload(url, session.tmp.dlMode === 'audio', m);
-            await sleep(1500); await showDlMenu(); session.state = 'DL_MENU'; return;
+            await sleep(1500); await showDlMenu(ctx); session.state = 'DL_MENU'; return;
         }
 
         // ══════════════════════════════════════════════════
@@ -176,7 +176,8 @@ export async function handleDl(ctx, m, text) {
         // ══════════════════════════════════════════════════
 }
 
-export async function showDlMenu() {
+export async function showDlMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         await update(
 `✧━── ❝ 𝐃𝐎𝐖𝐍𝐋𝐎𝐀𝐃 ❞ ──━✧
 

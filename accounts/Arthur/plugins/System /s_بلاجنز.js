@@ -25,10 +25,10 @@ export async function handlePlugins(ctx, m, text) {
 
         if (session.state === 'PLUGINS') {
             if (text === 'رجوع')    { await goBack(); return; }
-            if (text === 'الاوامر') { pushState('PLUGINS', showPluginsMenu); await showPluginsListMenu(); session.state = 'PLUGINS_LIST'; return; }
-            if (text === 'التعديل') { pushState('PLUGINS', showPluginsMenu); await showPluginsEditMenu(); session.state = 'PLUGINS_EDIT_MENU'; return; }
-            if (text === 'الادوات') { pushState('PLUGINS', showPluginsMenu); await showCmdTools();       session.state = 'CMDTOOLS';          return; }
-            if (text === 'جديد')    { pushState('PLUGINS', showPluginsMenu); await update('📝 اكتب اسم الامر الجديد:\n`بدون .js`\n\n🔙 *رجوع*'); session.state = 'PLUGIN_NEW_NAME'; return; }
+            if (text === 'الاوامر') { pushState('PLUGINS', () => showPluginsMenu(ctx)); await showPluginsListMenu(ctx); session.state = 'PLUGINS_LIST'; return; }
+            if (text === 'التعديل') { pushState('PLUGINS', () => showPluginsMenu(ctx)); await showPluginsEditMenu(ctx); session.state = 'PLUGINS_EDIT_MENU'; return; }
+            if (text === 'الادوات') { pushState('PLUGINS', () => showPluginsMenu(ctx)); await showCmdTools(ctx);       session.state = 'CMDTOOLS';          return; }
+            if (text === 'جديد')    { pushState('PLUGINS', () => showPluginsMenu(ctx)); await update('📝 اكتب اسم الامر الجديد:\n`بدون .js`\n\n🔙 *رجوع*'); session.state = 'PLUGIN_NEW_NAME'; return; }
             return;
         }
 
@@ -38,14 +38,14 @@ export async function handlePlugins(ctx, m, text) {
             if (text === 'التالي' || text === 'التالي ▶️') {
                 if ((session.tmp.pluginPage || 0) < (session.tmp.pluginPages?.length || 1) - 1) {
                     session.tmp.pluginPage++;
-                    await showPluginPage();
+                    await showPluginPage(ctx);
                 }
                 return;
             }
             if (text === 'السابق' || text === '◀️ السابق') {
                 if ((session.tmp.pluginPage || 0) > 0) {
                     session.tmp.pluginPage--;
-                    await showPluginPage();
+                    await showPluginPage(ctx);
                 }
                 return;
             }
@@ -67,8 +67,8 @@ export async function handlePlugins(ctx, m, text) {
                     session.tmp.pluginPages.push(allLines.slice(i, i + PAGE_SIZE));
                 }
                 session.tmp.pluginPage = 0;
-                await showPluginPage();
-                pushState('PLUGINS_LIST', showPluginsListMenu);
+                await showPluginPage(ctx);
+                pushState('PLUGINS_LIST', () => showPluginsListMenu(ctx));
                 session.state = 'PLUGINS_PAGE'; return;
             }
             if (text.startsWith('بحث ')) {
@@ -76,7 +76,7 @@ export async function handlePlugins(ctx, m, text) {
                 const fp = await findPluginByCmd(cmdName);
                 if (!fp) return update(`❌ ما وجدت: ${cmdName}\n\n🔙 *رجوع*`);
                 session.tmp.targetFile = fp; session.tmp.targetCmd = cmdName;
-                pushState('PLUGINS_LIST', showPluginsListMenu); await showPluginDetail(fp, cmdName); session.state = 'PLUGIN_DETAIL'; return;
+                pushState('PLUGINS_LIST', () => showPluginsListMenu(ctx)); await showPluginDetail(ctx, fp, cmdName); session.state = 'PLUGIN_DETAIL'; return;
             }
             if (text.startsWith('كود ')) {
                 const cmdName = text.slice(4).trim();
@@ -96,7 +96,7 @@ export async function handlePlugins(ctx, m, text) {
                 const fp = await findPluginByCmd(cmdName);
                 if (!fp) return update(`❌ ما وجدت: ${cmdName}\n\n🔙 *رجوع*`);
                 session.tmp.targetFile = fp; session.tmp.targetCmd = cmdName;
-                pushState('PLUGINS_EDIT_MENU', showPluginsEditMenu); await showPluginDetail(fp, cmdName); session.state = 'PLUGIN_DETAIL'; return;
+                pushState('PLUGINS_EDIT_MENU', () => showPluginsEditMenu(ctx)); await showPluginDetail(ctx, fp, cmdName); session.state = 'PLUGIN_DETAIL'; return;
             }
             if (text === 'طفي الكل') {
                 for (const f of getAllPluginFiles()) { if (f.includes('نظام')) continue; try { updatePluginField(f,'lock','on'); } catch (e) { if (e?.message) console.error('[catch]', e.message); } }
@@ -122,16 +122,16 @@ export async function handlePlugins(ctx, m, text) {
             }
             if (text === 'قفل' || text === 'فتح') {
                 try { updatePluginField(fp,'lock',text==='قفل'?'on':'off'); await loadPlugins().catch(()=>{}); } catch (e) { if (e?.message) console.error('[catch]', e.message); }
-                await sleep(800); await showPluginDetail(fp, tc); return;
+                await sleep(800); await showPluginDetail(ctx, fp, tc); return;
             }
             if (text === 'نخبة' || text === 'عام') {
                 try { updatePluginField(fp,'elite',text==='نخبة'?'on':'off'); await loadPlugins().catch(()=>{}); } catch (e) { if (e?.message) console.error('[catch]', e.message); }
-                await sleep(800); await showPluginDetail(fp, tc); return;
+                await sleep(800); await showPluginDetail(ctx, fp, tc); return;
             }
-            if (text === 'مجموعات') { try { updatePluginField(fp,'group','true'); updatePluginField(fp,'prv','false'); await loadPlugins().catch(()=>{}); } catch (e) { if (e?.message) console.error('[catch]', e.message); } await sleep(800); await showPluginDetail(fp, tc); return; }
-            if (text === 'خاص')     { try { updatePluginField(fp,'prv','true'); updatePluginField(fp,'group','false'); await loadPlugins().catch(()=>{}); } catch (e) { if (e?.message) console.error('[catch]', e.message); } await sleep(800); await showPluginDetail(fp, tc); return; }
-            if (text === 'للجميع')  { try { updatePluginField(fp,'group','false'); updatePluginField(fp,'prv','false'); await loadPlugins().catch(()=>{}); } catch (e) { if (e?.message) console.error('[catch]', e.message); } await sleep(800); await showPluginDetail(fp, tc); return; }
-            if (text === 'تغيير الاسم') { pushState('PLUGIN_DETAIL', () => showPluginDetail(session.tmp.targetFile, session.tmp.targetCmd)); await update('✏️ اكتب الاسم الجديد:\n\n🔙 *رجوع*'); session.state = 'PLUGIN_RENAME'; return; }
+            if (text === 'مجموعات') { try { updatePluginField(fp,'group','true'); updatePluginField(fp,'prv','false'); await loadPlugins().catch(()=>{}); } catch (e) { if (e?.message) console.error('[catch]', e.message); } await sleep(800); await showPluginDetail(ctx, fp, tc); return; }
+            if (text === 'خاص')     { try { updatePluginField(fp,'prv','true'); updatePluginField(fp,'group','false'); await loadPlugins().catch(()=>{}); } catch (e) { if (e?.message) console.error('[catch]', e.message); } await sleep(800); await showPluginDetail(ctx, fp, tc); return; }
+            if (text === 'للجميع')  { try { updatePluginField(fp,'group','false'); updatePluginField(fp,'prv','false'); await loadPlugins().catch(()=>{}); } catch (e) { if (e?.message) console.error('[catch]', e.message); } await sleep(800); await showPluginDetail(ctx, fp, tc); return; }
+            if (text === 'تغيير الاسم') { pushState('PLUGIN_DETAIL', () => showPluginDetail(ctx, session.tmp.targetFile, session.tmp.targetCmd)); await update('✏️ اكتب الاسم الجديد:\n\n🔙 *رجوع*'); session.state = 'PLUGIN_RENAME'; return; }
             return;
         }
 
@@ -139,7 +139,7 @@ export async function handlePlugins(ctx, m, text) {
             if (text === 'رجوع') { await goBack(); return; }
             try { updatePluginField(session.tmp.targetFile,'command',text.trim()); await loadPlugins().catch(()=>{}); } catch (e) { if (e?.message) console.error('[catch]', e.message); }
             await update(`☑️ ${session.tmp.targetCmd} ➔ ${text.trim()}`);
-            session.tmp.targetCmd = text.trim(); await sleep(1200); await showPluginDetail(session.tmp.targetFile, session.tmp.targetCmd); session.state = 'PLUGIN_DETAIL'; return;
+            session.tmp.targetCmd = text.trim(); await sleep(1200); await showPluginDetail(ctx, session.tmp.targetFile, session.tmp.targetCmd); session.state = 'PLUGIN_DETAIL'; return;
         }
 
         if (session.state === 'PLUGIN_NEW_NAME') {
@@ -160,7 +160,7 @@ export async function handlePlugins(ctx, m, text) {
                 reactOk(sock, m);
                 await update(`☑️ تم إنشاء [ ${session.tmp.newPluginName} ]`);
             } catch (e) { await update(`❌ ${e?.message}`); }
-            await sleep(1000); await showPluginsMenu(); session.state = 'PLUGINS'; return;
+            await sleep(1000); await showPluginsMenu(ctx); session.state = 'PLUGINS'; return;
         }
 
         // ══════════════════════════════════════════════════
@@ -168,7 +168,8 @@ export async function handlePlugins(ctx, m, text) {
         // ══════════════════════════════════════════════════
 }
 
-export async function showPluginsMenu() {
+export async function showPluginsMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         const count = getAllPluginFiles().length;
         await update(
 `✧━── ❝ 𝐏𝐋𝐔𝐆𝐈𝐍𝐒 ❞ ──━✧
@@ -192,7 +193,8 @@ export async function showPluginsMenu() {
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
 
-export async function showPluginPage() {
+export async function showPluginPage(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         const pages = tmp.pluginPages || [];
         const page  = tmp.pluginPage  || 0;
         if (!pages.length) return update('📭 لا يوجد أوامر.\n\n🔙 *رجوع*');
@@ -217,7 +219,8 @@ ${nav}
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
 
-export async function showPluginsListMenu() {
+export async function showPluginsListMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         await update(
 `✧━── ❝ 𝐋𝐈𝐒𝐓 ❞ ──━✧
 
@@ -235,7 +238,8 @@ export async function showPluginsListMenu() {
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
 
-export async function showPluginsEditMenu() {
+export async function showPluginsEditMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         await update(
 `✧━── ❝ 𝐄𝐃𝐈𝐓 ❞ ──━✧
 
@@ -253,7 +257,8 @@ export async function showPluginsEditMenu() {
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
 
-export async function showPluginDetail(fp, cmd) {
+export async function showPluginDetail(ctx, fp, cmd) {
+        const { update, sock, chatId, session } = ctx || {};
         const { elite, lock, group, prv } = getPluginInfo(fp);
         await update(
 `✧━── ❝ 𝐏𝐋𝐔𝐆𝐈𝐍 ❞ ──━✧

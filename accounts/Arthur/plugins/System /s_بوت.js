@@ -25,13 +25,13 @@ export async function handleBot(ctx, m, text) {
 
         if (session.state === 'BOT') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'الاسم')      { pushState('BOT', showBotMenu); await update('✏️ اكتب الاسم الجديد للبوت:\n\n🔙 *رجوع*'); session.state = 'BOT_NAME'; return; }
-            if (text === 'الصورة')     { pushState('BOT', showBotMenu); await update('🖼️ ارسل الصورة الجديدة للبوت:\n\n🔙 *رجوع*'); session.state = 'BOT_PHOTO'; return; }
-            if (text === 'الوصف')      { pushState('BOT', showBotMenu); await update('📝 اكتب البايو الجديد للبوت:\n\n🔙 *رجوع*'); session.state = 'BOT_STATUS'; return; }
-            if (text === 'حظر')        { pushState('BOT', showBotMenu); await update('📱 منشن الشخص او اكتب رقمه للحظر:\n\n🔙 *رجوع*'); session.state = 'BOT_BLOCK'; return; }
-            if (text === 'فك الحظر')   { pushState('BOT', showBotMenu); await update('📱 منشن الشخص او اكتب رقمه لفك الحظر:\n\n🔙 *رجوع*'); session.state = 'BOT_UNBLOCK'; return; }
+            if (text === 'الاسم')      { pushState('BOT', () => showBotMenu(ctx)); await update('✏️ اكتب الاسم الجديد للبوت:\n\n🔙 *رجوع*'); session.state = 'BOT_NAME'; return; }
+            if (text === 'الصورة')     { pushState('BOT', () => showBotMenu(ctx)); await update('🖼️ ارسل الصورة الجديدة للبوت:\n\n🔙 *رجوع*'); session.state = 'BOT_PHOTO'; return; }
+            if (text === 'الوصف')      { pushState('BOT', () => showBotMenu(ctx)); await update('📝 اكتب البايو الجديد للبوت:\n\n🔙 *رجوع*'); session.state = 'BOT_STATUS'; return; }
+            if (text === 'حظر')        { pushState('BOT', () => showBotMenu(ctx)); await update('📱 منشن الشخص او اكتب رقمه للحظر:\n\n🔙 *رجوع*'); session.state = 'BOT_BLOCK'; return; }
+            if (text === 'فك الحظر')   { pushState('BOT', () => showBotMenu(ctx)); await update('📱 منشن الشخص او اكتب رقمه لفك الحظر:\n\n🔙 *رجوع*'); session.state = 'BOT_UNBLOCK'; return; }
             if (text === 'المجموعات') {
-                pushState('BOT', showBotMenu);
+                pushState('BOT', () => showBotMenu(ctx));
                 try {
                     const allGroups = await sock.groupFetchAllParticipating();
                     const groups = Object.values(allGroups);
@@ -69,7 +69,7 @@ ${lines}
                 reactOk(sock, m);
                 await update(`☑️ تم تغيير اسم البوت الى:\n*${text.trim()}*\n\n🔙 *رجوع*`);
             } catch (e) { await update(`❌ ${e?.message}\n\n🔙 *رجوع*`); }
-            await sleep(800); await showBotMenu(); session.state = 'BOT'; return;
+            await sleep(800); await showBotMenu(ctx); session.state = 'BOT'; return;
         }
 
         if (session.state === 'BOT_STATUS') {
@@ -79,7 +79,7 @@ ${lines}
                 reactOk(sock, m);
                 await update(`☑️ تم تغيير وصف البوت.\n\n🔙 *رجوع*`);
             } catch (e) { await update(`❌ ${e?.message}\n\n🔙 *رجوع*`); }
-            await sleep(800); await showBotMenu(); session.state = 'BOT'; return;
+            await sleep(800); await showBotMenu(ctx); session.state = 'BOT'; return;
         }
 
         if (session.state === 'BOT_PHOTO') {
@@ -98,7 +98,7 @@ ${lines}
                 reactOk(sock, m);
                 await update('☑️ تم تغيير صورة البوت.\n\n🔙 *رجوع*');
             } catch (e) { reactFail(sock, m); await update(`❌ ${e?.message}\n\n🔙 *رجوع*`); }
-            await sleep(800); await showBotMenu(); session.state = 'BOT'; return;
+            await sleep(800); await showBotMenu(ctx); session.state = 'BOT'; return;
         }
 
         if (session.state === 'BOT_BLOCK') {
@@ -131,7 +131,7 @@ ${lines}
                 console.error('[BOT_BLOCK]', e.message);
                 await update(`❌ فشل الحظر: ${(e?.message||'').slice(0,100)}\n\n🔙 *رجوع*`);
             }
-            await sleep(800); await showBotMenu(); session.state = 'BOT'; return;
+            await sleep(800); await showBotMenu(ctx); session.state = 'BOT'; return;
         }
 
         if (session.state === 'BOT_UNBLOCK') {
@@ -162,11 +162,12 @@ ${lines}
                 console.error('[BOT_UNBLOCK]', e.message);
                 await update(`❌ فشل: ${(e?.message||'').slice(0,100)}\n\n🔙 *رجوع*`);
             }
-            await sleep(800); await showBotMenu(); session.state = 'BOT'; return;
+            await sleep(800); await showBotMenu(ctx); session.state = 'BOT'; return;
         }
 }
 
-export async function showBotMenu() {
+export async function showBotMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         const botJid = getBotJid(sock);
         let name = sock.user?.name || '—';
         await update(

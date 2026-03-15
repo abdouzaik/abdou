@@ -29,12 +29,12 @@ export async function handleElite(ctx, m, text) {
                 try {
                     const elites = sock.getElites?.() || [];
                     if (!elites.length) {
-                        pushState('ELITE', showEliteMenu);
+                        pushState('ELITE', () => showEliteMenu(ctx));
                         session.state = 'ELITE_VIEW';
                         return update(`✧━── ❝ 𝐍𝐗𝐁𝐀 ❞ ──━✧\n\n📋 القائمة فارغة.\n\n🔙 *رجوع*\n\n✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
                     }
                     const list = elites.map((id, i) => `${i+1}. @${normalizeJid(id)}`).join('\n');
-                    pushState('ELITE', showEliteMenu);
+                    pushState('ELITE', () => showEliteMenu(ctx));
                     session.state = 'ELITE_VIEW';
                     return update({
                         text: `✧━── ❝ 𝑬𝑳𝑰𝑻𝑬 ❞ ──━✧\n\n♦️ *قائمة النخبة (${elites.length}):*\n\n${list}\n\n🔙 *رجوع*\n\n✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`,
@@ -42,9 +42,9 @@ export async function handleElite(ctx, m, text) {
                     });
                 } catch { return update('❌ تعذر جلب القائمة.\n\n🔙 *رجوع*'); }
             }
-            if (text === 'اضافة')    { pushState('ELITE', showEliteMenu); await update('📱 ارسل الرقم:\nمثال: 966501234567\nاو منشن شخص\n\n🔙 *رجوع*'); session.state = 'ELITE_ADD'; return; }
-            if (text === 'حذف')      { pushState('ELITE', showEliteMenu); await update('📱 ارسل الرقم للحذف:\nاو منشن شخص\n\n🔙 *رجوع*'); session.state = 'ELITE_DEL'; return; }
-            if (text === 'مسح الكل') { pushState('ELITE', showEliteMenu); await update('⚠️ *تاكيد مسح كل النخبة؟*\nاكتب *نعم* او *رجوع*'); session.state = 'ELITE_CLEAR'; return; }
+            if (text === 'اضافة')    { pushState('ELITE', () => showEliteMenu(ctx)); await update('📱 ارسل الرقم:\nمثال: 966501234567\nاو منشن شخص\n\n🔙 *رجوع*'); session.state = 'ELITE_ADD'; return; }
+            if (text === 'حذف')      { pushState('ELITE', () => showEliteMenu(ctx)); await update('📱 ارسل الرقم للحذف:\nاو منشن شخص\n\n🔙 *رجوع*'); session.state = 'ELITE_DEL'; return; }
+            if (text === 'مسح الكل') { pushState('ELITE', () => showEliteMenu(ctx)); await update('⚠️ *تاكيد مسح كل النخبة؟*\nاكتب *نعم* او *رجوع*'); session.state = 'ELITE_CLEAR'; return; }
             return;
         }
 
@@ -76,7 +76,7 @@ export async function handleElite(ctx, m, text) {
                 if (res?.fail?.length)    msg2 += '⚠️ ' + res.fail.map(u => `@${normalizeJid(u.id)} (${u.error==='exist_already'?'موجود مسبقاً':u.error})`).join(', ');
                 await update(msg2.trim());
             } catch (e) { await update(`❌ ${e?.message}`); }
-            await sleep(1500); await showEliteMenu(); session.state = 'ELITE'; return;
+            await sleep(1500); await showEliteMenu(ctx); session.state = 'ELITE'; return;
         }
 
         if (session.state === 'ELITE_DEL') {
@@ -98,7 +98,7 @@ export async function handleElite(ctx, m, text) {
                 if (res?.fail?.length)    msg2 += '⚠️ ' + res.fail.map(u => `@${normalizeJid(u.id)} (${u.error==='not_exist'?'ليس نخبة أصلاً':u.error})`).join(', ');
                 await update(msg2.trim());
             } catch (e) { await update(`❌ ${e?.message}`); }
-            await sleep(1500); await showEliteMenu(); session.state = 'ELITE'; return;
+            await sleep(1500); await showEliteMenu(ctx); session.state = 'ELITE'; return;
         }
 
         if (session.state === 'ELITE_CLEAR') {
@@ -106,7 +106,7 @@ export async function handleElite(ctx, m, text) {
             if (text === 'نعم') {
                 try { await sock.eliteReset?.({ sock }); await update('☑️ تم مسح الكل.'); }
                 catch (e) { await update(`❌ ${e?.message}`); }
-                await sleep(1200); await showEliteMenu(); session.state = 'ELITE';
+                await sleep(1200); await showEliteMenu(ctx); session.state = 'ELITE';
             }
             return;
         }
@@ -116,7 +116,8 @@ export async function handleElite(ctx, m, text) {
         // ══════════════════════════════════════════════════
 }
 
-export async function showEliteMenu() {
+export async function showEliteMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         await update(
 `✧━── ❝ 𝐍𝐗𝐁𝐀 ❞ ──━✧
 

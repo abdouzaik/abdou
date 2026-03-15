@@ -25,12 +25,12 @@ export async function handleAdmin(ctx, m, text) {
 
         if (session.state === 'ADMIN') {
             if (text === 'رجوع')         { await goBack(); return; }
-            if (text === 'الاعضاء')      { pushState('ADMIN', showAdminMenu); await showAdminMembersMenu();  session.state = 'ADMIN_MEMBERS';   return; }
-            if (text === 'الرسائل')      { pushState('ADMIN', showAdminMenu); await showAdminMessagesMenu(); session.state = 'ADMIN_MESSAGES';  return; }
-            if (text === 'المجموعة')     { pushState('ADMIN', showAdminMenu); await showAdminGroupMenu();    session.state = 'ADMIN_GROUP_SET'; return; }
-            if (text === 'المحتوى')      { pushState('ADMIN', showAdminMenu); await showAdminContentMenu();  session.state = 'ADMIN_CONTENT';   return; }
-            if (text === 'قفل المحتوى') { pushState('ADMIN', showAdminMenu); await showAdminLocksMenu();    session.state = 'ADMIN_LOCKS';     return; }
-            if (text === 'الادوات')      { pushState('ADMIN', showAdminMenu); await showAdminToolsMenu();    session.state = 'ADMIN_TOOLS';     return; }
+            if (text === 'الاعضاء')      { pushState('ADMIN', () => showAdminMenu(ctx)); await showAdminMembersMenu(ctx);  session.state = 'ADMIN_MEMBERS';   return; }
+            if (text === 'الرسائل')      { pushState('ADMIN', () => showAdminMenu(ctx)); await showAdminMessagesMenu(ctx); session.state = 'ADMIN_MESSAGES';  return; }
+            if (text === 'المجموعة')     { pushState('ADMIN', () => showAdminMenu(ctx)); await showAdminGroupMenu(ctx);    session.state = 'ADMIN_GROUP_SET'; return; }
+            if (text === 'المحتوى')      { pushState('ADMIN', () => showAdminMenu(ctx)); await showAdminContentMenu(ctx);  session.state = 'ADMIN_CONTENT';   return; }
+            if (text === 'قفل المحتوى') { pushState('ADMIN', () => showAdminMenu(ctx)); await showAdminLocksMenu(ctx);    session.state = 'ADMIN_LOCKS';     return; }
+            if (text === 'الادوات')      { pushState('ADMIN', () => showAdminMenu(ctx)); await showAdminToolsMenu(ctx);    session.state = 'ADMIN_TOOLS';     return; }
             return;
         }
 
@@ -56,7 +56,7 @@ export async function handleAdmin(ctx, m, text) {
                 session.tmp.adminAction = memberActions[text];
                 const hint = text === 'كتم' ? '⏱️ كم دقيقة؟ (مثال: 30)\nثم منشن او رد' : '↩️ منشن العضو او رد على رسالته';
                 await update(`${hint}\n\n🔙 *رجوع*`);
-                pushState('ADMIN_MEMBERS', showAdminMembersMenu); session.state = 'ADMIN_TARGET'; return;
+                pushState('ADMIN_MEMBERS', () => showAdminMembersMenu(ctx)); session.state = 'ADMIN_TARGET'; return;
             }
             return;
         }
@@ -106,7 +106,7 @@ _يمكن للمستخدم الآن استخدام البوت_`,
             } else if (action === 'unmute') {
                 await tryAdminAction(() => sock.groupParticipantsUpdate(chatId, [target], 'promote'), '🔊');
             }
-            await sleep(600); await showAdminMembersMenu(); session.state = 'ADMIN_MEMBERS'; return;
+            await sleep(600); await showAdminMembersMenu(ctx); session.state = 'ADMIN_MEMBERS'; return;
         }
 
         // ADMIN_MESSAGES
@@ -150,9 +150,9 @@ _يمكن للمستخدم الآن استخدام البوت_`,
         // ADMIN_GROUP_SET
         if (session.state === 'ADMIN_GROUP_SET') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'وضع اسم')      { pushState('ADMIN_GROUP_SET', showAdminGroupMenu); await update('✏️ ارسل الاسم الجديد:\n\n🔙 *رجوع*'); session.state = 'ADMIN_SETNAME'; return; }
-            if (text === 'وضع وصف')      { pushState('ADMIN_GROUP_SET', showAdminGroupMenu); await update('📝 ارسل الوصف الجديد:\n\n🔙 *رجوع*'); session.state = 'ADMIN_SETDESC'; return; }
-            if (text === 'وضع صورة')     { pushState('ADMIN_GROUP_SET', showAdminGroupMenu); await update('🖼️ ارسل او اقتبس صورة:\n\n🔙 *رجوع*'); session.state = 'ADMIN_SETIMG'; return; }
+            if (text === 'وضع اسم')      { pushState('ADMIN_GROUP_SET', () => showAdminGroupMenu(ctx)); await update('✏️ ارسل الاسم الجديد:\n\n🔙 *رجوع*'); session.state = 'ADMIN_SETNAME'; return; }
+            if (text === 'وضع وصف')      { pushState('ADMIN_GROUP_SET', () => showAdminGroupMenu(ctx)); await update('📝 ارسل الوصف الجديد:\n\n🔙 *رجوع*'); session.state = 'ADMIN_SETDESC'; return; }
+            if (text === 'وضع صورة')     { pushState('ADMIN_GROUP_SET', () => showAdminGroupMenu(ctx)); await update('🖼️ ارسل او اقتبس صورة:\n\n🔙 *رجوع*'); session.state = 'ADMIN_SETIMG'; return; }
             if (text === 'قفل المحادثة') { await tryAdminAction(() => sock.groupSettingUpdate(chatId, 'announcement'), '🔒'); return; }
             if (text === 'فتح المحادثة') { await tryAdminAction(() => sock.groupSettingUpdate(chatId, 'not_announcement'), '🔓'); return; }
             if (text === 'رابط') {
@@ -160,21 +160,21 @@ _يمكن للمستخدم الآن استخدام البوت_`,
                 catch (e) { await update(`❌ ${e?.message}`); }
                 return;
             }
-            if (text === 'انضم') { pushState('ADMIN_GROUP_SET', showAdminGroupMenu); await update('🔗 ارسل رابط المجموعة:\n\n🔙 *رجوع*'); session.state = 'ADMIN_JOIN'; return; }
-            if (text === 'خروج') { pushState('ADMIN_GROUP_SET', showAdminGroupMenu); await update('⚠️ تاكيد الخروج؟\nاكتب *نعم* او *رجوع*'); session.state = 'ADMIN_LEAVE'; return; }
+            if (text === 'انضم') { pushState('ADMIN_GROUP_SET', () => showAdminGroupMenu(ctx)); await update('🔗 ارسل رابط المجموعة:\n\n🔙 *رجوع*'); session.state = 'ADMIN_JOIN'; return; }
+            if (text === 'خروج') { pushState('ADMIN_GROUP_SET', () => showAdminGroupMenu(ctx)); await update('⚠️ تاكيد الخروج؟\nاكتب *نعم* او *رجوع*'); session.state = 'ADMIN_LEAVE'; return; }
             return;
         }
 
         if (session.state === 'ADMIN_SETNAME') {
             if (text === 'رجوع') { await goBack(); return; }
             reactWait(sock, m); await tryAdminAction(() => sock.groupUpdateSubject(chatId, text), '☑️');
-            await sleep(800); await showAdminGroupMenu(); session.state = 'ADMIN_GROUP_SET'; return;
+            await sleep(800); await showAdminGroupMenu(ctx); session.state = 'ADMIN_GROUP_SET'; return;
         }
 
         if (session.state === 'ADMIN_SETDESC') {
             if (text === 'رجوع') { await goBack(); return; }
             reactWait(sock, m); await tryAdminAction(() => sock.groupUpdateDescription(chatId, text), '☑️');
-            await sleep(800); await showAdminGroupMenu(); session.state = 'ADMIN_GROUP_SET'; return;
+            await sleep(800); await showAdminGroupMenu(ctx); session.state = 'ADMIN_GROUP_SET'; return;
         }
 
         if (session.state === 'ADMIN_SETIMG') {
@@ -190,7 +190,7 @@ _يمكن للمستخدم الآن استخدام البوت_`,
                 const buf = await downloadMediaMessage(target2, 'buffer', {});
                 await tryAdminAction(() => sock.updateProfilePicture(chatId, buf), '☑️');
             } catch (e) { reactFail(sock, m); await update(`❌ ${e?.message}`); }
-            await sleep(800); await showAdminGroupMenu(); session.state = 'ADMIN_GROUP_SET'; return;
+            await sleep(800); await showAdminGroupMenu(ctx); session.state = 'ADMIN_GROUP_SET'; return;
         }
 
         if (session.state === 'ADMIN_JOIN') {
@@ -200,7 +200,7 @@ _يمكن للمستخدم الآن استخدام البوت_`,
             reactWait(sock, m);
             try { await sock.groupAcceptInvite(match[1]); reactOk(sock, m); await update('☑️ تم الانضمام.'); }
             catch (e) { reactFail(sock, m); await update(`❌ ${e?.message}`); }
-            await sleep(800); await showAdminGroupMenu(); session.state = 'ADMIN_GROUP_SET'; return;
+            await sleep(800); await showAdminGroupMenu(ctx); session.state = 'ADMIN_GROUP_SET'; return;
         }
 
         if (session.state === 'ADMIN_LEAVE') {
@@ -212,23 +212,23 @@ _يمكن للمستخدم الآن استخدام البوت_`,
         // ADMIN_CONTENT
         if (session.state === 'ADMIN_CONTENT') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'وضع ترحيب') { pushState('ADMIN_CONTENT', showAdminContentMenu); await update('👋 اكتب رسالة الترحيب:\nاستخدم {name} للاسم و {number} للرقم\n\n🔙 *رجوع*'); session.state = 'ADMIN_SETWELCOME'; return; }
+            if (text === 'وضع ترحيب') { pushState('ADMIN_CONTENT', () => showAdminContentMenu(ctx)); await update('👋 اكتب رسالة الترحيب:\nاستخدم {name} للاسم و {number} للرقم\n\n🔙 *رجوع*'); session.state = 'ADMIN_SETWELCOME'; return; }
             if (text === 'ترحيب') {
                 const wf = grpFile('welcome', chatId);
                 if (!fs.existsSync(wf)) return update('❌ لم يُضبط ترحيب بعد.\n\nاكتب *وضع ترحيب* لضبطه.\n\n🔙 *رجوع*');
                 const { text: wt } = readJSON(wf, {});
                 await update(`📋 *رسالة الترحيب:*\n\n${wt}\n\nاكتب *حذف* لحذفه\n🔙 *رجوع*`);
-                pushState('ADMIN_CONTENT', showAdminContentMenu); session.state = 'ADMIN_WELCOME_VIEW'; return;
+                pushState('ADMIN_CONTENT', () => showAdminContentMenu(ctx)); session.state = 'ADMIN_WELCOME_VIEW'; return;
             }
-            if (text === 'وضع قوانين') { pushState('ADMIN_CONTENT', showAdminContentMenu); await update('📜 اكتب القوانين:\n\n🔙 *رجوع*'); session.state = 'ADMIN_SETRULES'; return; }
+            if (text === 'وضع قوانين') { pushState('ADMIN_CONTENT', () => showAdminContentMenu(ctx)); await update('📜 اكتب القوانين:\n\n🔙 *رجوع*'); session.state = 'ADMIN_SETRULES'; return; }
             if (text === 'قوانين') {
                 const rf = grpFile('rules', chatId);
                 if (!fs.existsSync(rf)) return update('❌ لم تُضبط قوانين بعد.\n\n🔙 *رجوع*');
                 const { text: rt } = readJSON(rf, {});
                 await update(`📜 *القوانين:*\n\n${rt}\n\nاكتب *حذف* لحذفها\n🔙 *رجوع*`);
-                pushState('ADMIN_CONTENT', showAdminContentMenu); session.state = 'ADMIN_RULES_VIEW'; return;
+                pushState('ADMIN_CONTENT', () => showAdminContentMenu(ctx)); session.state = 'ADMIN_RULES_VIEW'; return;
             }
-            if (text === 'كلمات ممنوعة') { pushState('ADMIN_CONTENT', showAdminContentMenu); await showBadwords(); session.state = 'ADMIN_BADWORDS'; return; }
+            if (text === 'كلمات ممنوعة') { pushState('ADMIN_CONTENT', () => showAdminContentMenu(ctx)); await showBadwords(ctx); session.state = 'ADMIN_BADWORDS'; return; }
             return;
         }
 
@@ -237,33 +237,33 @@ _يمكن للمستخدم الآن استخدام البوت_`,
             writeJSON(grpFile('welcome', chatId), { text });
             reactOk(sock, m);
             await update(`☑️ تم حفظ رسالة الترحيب.\n\n🔙 *رجوع*`);
-            await sleep(800); await showAdminContentMenu(); session.state = 'ADMIN_CONTENT'; return;
+            await sleep(800); await showAdminContentMenu(ctx); session.state = 'ADMIN_CONTENT'; return;
         }
 
         if (session.state === 'ADMIN_SETRULES') {
             if (text === 'رجوع') { await goBack(); return; }
             writeJSON(grpFile('rules', chatId), { text });
             reactOk(sock, m);
-            await sleep(800); await showAdminContentMenu(); session.state = 'ADMIN_CONTENT'; return;
+            await sleep(800); await showAdminContentMenu(ctx); session.state = 'ADMIN_CONTENT'; return;
         }
 
         if (session.state === 'ADMIN_WELCOME_VIEW') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'حذف') { try { fs.removeSync(grpFile('welcome', chatId)); reactOk(sock, m); } catch (e) { if (e?.message) console.error('[catch]', e.message); } await sleep(400); await showAdminContentMenu(); session.state = 'ADMIN_CONTENT'; }
+            if (text === 'حذف') { try { fs.removeSync(grpFile('welcome', chatId)); reactOk(sock, m); } catch (e) { if (e?.message) console.error('[catch]', e.message); } await sleep(400); await showAdminContentMenu(ctx); session.state = 'ADMIN_CONTENT'; }
             return;
         }
 
         if (session.state === 'ADMIN_RULES_VIEW') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'حذف') { try { fs.removeSync(grpFile('rules', chatId)); reactOk(sock, m); } catch (e) { if (e?.message) console.error('[catch]', e.message); } await sleep(400); await showAdminContentMenu(); session.state = 'ADMIN_CONTENT'; }
+            if (text === 'حذف') { try { fs.removeSync(grpFile('rules', chatId)); reactOk(sock, m); } catch (e) { if (e?.message) console.error('[catch]', e.message); } await sleep(400); await showAdminContentMenu(ctx); session.state = 'ADMIN_CONTENT'; }
             return;
         }
 
         if (session.state === 'ADMIN_BADWORDS') {
             if (text === 'رجوع') { await goBack(); return; }
             const bf = grpFile('badwords', chatId); let words = readJSON(bf, []);
-            if (text.startsWith('اضافة ')) { const w = text.slice(6).trim(); if (w) { words.push(w.toLowerCase()); writeJSON(bf, words); reactOk(sock, m); } await sleep(400); await showBadwords(); return; }
-            if (text.startsWith('حذف '))   { writeJSON(bf, words.filter(x => x !== text.slice(4).trim())); reactOk(sock, m); await sleep(400); await showBadwords(); return; }
+            if (text.startsWith('اضافة ')) { const w = text.slice(6).trim(); if (w) { words.push(w.toLowerCase()); writeJSON(bf, words); reactOk(sock, m); } await sleep(400); await showBadwords(ctx); return; }
+            if (text.startsWith('حذف '))   { writeJSON(bf, words.filter(x => x !== text.slice(4).trim())); reactOk(sock, m); await sleep(400); await showBadwords(ctx); return; }
             return;
         }
 
@@ -281,7 +281,7 @@ _يمكن للمستخدم الآن استخدام البوت_`,
                 p[LOCK_MAP[text]] = p[LOCK_MAP[text]] === 'on' ? 'off' : 'on';
                 writeProt(p);
                 reactOk(sock, m);
-                await sleep(500); await showAdminLocksMenu(); return;
+                await sleep(500); await showAdminLocksMenu(ctx); return;
             }
             return;
         }
@@ -305,7 +305,7 @@ _يمكن للمستخدم الآن استخدام البوت_`,
                 } catch (e) { await update(`❌ ${e?.message}`); }
                 return;
             }
-            if (text === 'اذاعة') { pushState('ADMIN_TOOLS', showAdminToolsMenu); await update('📢 اكتب رسالة الإذاعة:\n\n🔙 *رجوع*'); session.state = 'ADMIN_BROADCAST'; return; }
+            if (text === 'اذاعة') { pushState('ADMIN_TOOLS', () => showAdminToolsMenu(ctx)); await update('📢 اكتب رسالة الإذاعة:\n\n🔙 *رجوع*'); session.state = 'ADMIN_BROADCAST'; return; }
             if (text === 'تحديث') {
                 reactWait(sock, m);
                 try { await loadPlugins(); reactOk(sock, m); await update('☑️ تم تحديث الاوامر.\n\n🔙 *رجوع*'); }
@@ -324,7 +324,7 @@ _يمكن للمستخدم الآن استخدام البوت_`,
                 for (const gid of Object.keys(chats)) { try { await sock.sendMessage(gid, { text }); sent++; } catch (e) { if (e?.message) console.error('[catch]', e.message); } await sleep(500); }
                 reactOk(sock, m); await update(`☑️ الإرسال لـ ${sent} مجموعة.`);
             } catch (e) { await update(`❌ ${e?.message}`); }
-            await sleep(1000); await showAdminToolsMenu(); session.state = 'ADMIN_TOOLS'; return;
+            await sleep(1000); await showAdminToolsMenu(ctx); session.state = 'ADMIN_TOOLS'; return;
         }
 
 
@@ -333,7 +333,8 @@ _يمكن للمستخدم الآن استخدام البوت_`,
         // ══════════════════════════════════════════════════
 }
 
-export async function showAdminMenu() {
+export async function showAdminMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         await update(
 `✧━── ❝ 𝐀𝐃𝐌𝐈𝐍 ❞ ──━✧
 
@@ -360,7 +361,8 @@ export async function showAdminMenu() {
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
 
-export async function showAdminMembersMenu() {
+export async function showAdminMembersMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         await update(
 `✧━── ❝ 𝐌𝐄𝐌𝐁𝐄𝐑𝐒 ❞ ──━✧
 
@@ -393,7 +395,8 @@ export async function showAdminMembersMenu() {
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
 
-export async function showAdminMessagesMenu() {
+export async function showAdminMessagesMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         await update(
 `✧━── ❝ 𝐌𝐄𝐒𝐒𝐀𝐆𝐄𝐒 ❞ ──━✧
 
@@ -411,7 +414,8 @@ export async function showAdminMessagesMenu() {
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
 
-export async function showAdminGroupMenu() {
+export async function showAdminGroupMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         await update(
 `✧━── ❝ 𝐆𝐑𝐎𝐔𝐏 ❞ ──━✧
 
@@ -444,7 +448,8 @@ export async function showAdminGroupMenu() {
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
 
-export async function showAdminContentMenu() {
+export async function showAdminContentMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         await update(
 `✧━── ❝ 𝐂𝐎𝐍𝐓𝐄𝐍𝐓 ❞ ──━✧
 
@@ -468,7 +473,8 @@ export async function showAdminContentMenu() {
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
 
-export async function showAdminLocksMenu() {
+export async function showAdminLocksMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         const p = readProt(), s = k => p[k]==='on'?'🔒 مفعّل':'🔓 معطّل';
         await update(
 `✧━── ❝ 𝐋𝐎𝐂𝐊𝐒 ❞ ──━✧
@@ -490,7 +496,8 @@ export async function showAdminLocksMenu() {
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
 
-export async function showAdminToolsMenu() {
+export async function showAdminToolsMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         await update(
 `✧━── ❝ 𝐓𝐎𝐎𝐋𝐒 ❞ ──━✧
 
@@ -508,7 +515,8 @@ export async function showAdminToolsMenu() {
 ✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`);
     }
 
-export async function showBadwords() {
+export async function showBadwords(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         const bf = grpFile('badwords', chatId);
         const words = readJSON(bf, []);
         const list  = words.length ? words.map((w,i)=>`${i+1}. ${w}`).join('\n') : 'لا يوجد كلمات';
@@ -527,7 +535,8 @@ ${list}
     }
 
 
-export async function showBotMenu() {
+export async function showBotMenu(ctx) {
+        const { update, sock, chatId, session } = ctx || {};
         const botJid = getBotJid(sock);
         let name = sock.user?.name || '—';
         await update(

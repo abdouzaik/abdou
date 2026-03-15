@@ -10,7 +10,7 @@ import {
     sleep, react, reactWait, reactOk, reactFail, reactInput,
     normalizeJid, getBotJid, checkElite,
     grpFile, DATA_DIR, BOT_DIR, activeSessions, MAIN_MENU,
-    registerDeleteListener, registerWelcomeListener,
+    registerDeleteListener, registerWelcomeListener, isRateLimited,
 } from './_utils.js';
 
 import { handleElite,   showEliteMenu }              from './s_نخبة.js';
@@ -143,7 +143,7 @@ ${who} يستخدم النظام الآن.
     }
 
     const tryAdminAction = async (fn, emoji = '☑️') => {
-        try { await fn(); react(sock, m, emoji); return true; }
+        try { await fn(); react(sock, msg, emoji); return true; }
         catch (e) {
             const { isGroup, isAdmin, isBotAdmin } = await getAdminPerms();
             if (!isGroup)    { await update('❌ هذا الامر للمجموعات فقط.');    return false; }
