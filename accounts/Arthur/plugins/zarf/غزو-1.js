@@ -152,19 +152,25 @@ async function processElimination(sock, chatId, players, responded, session, cac
         if (eligible.length > 0) targets = [eligible[0].p];
     }
 
-    const ABDUCT_MSGS = [
-        j => `☄️ *تم اختطاف اللاعب:* ${display(j)}`,
+    // رسائل الطرد حسب السبب
+    const ABDUCT_SLOW = [
         j => `👾 *تم سحب:* ${display(j)} _بسبب بطء الاستجابة_`,
-        j => `🛸 *الاختطاف تم بنجاح لـ:* ${display(j)}`,
-        j => `🌌 *الضحية الحالية:* ${display(j)} _غادر الكوكب_`,
     ];
+    const ABDUCT_IDLE = [
+        j => `🛸 *تم اختطاف اللاعب:* ${display(j)}`,
+    ];
+
+    // الكل أجاب = everyoneResponded → نطرد الأبطأ بـ رسالة "بطء"
+    const everyoneResponded = didNot.length === 0;
 
     for (const target of targets) {
         await sock.groupParticipantsUpdate(chatId, [target], "remove")
             .catch(err => console.log(`[Kick]: ${err.message}`));
         const phoneJid = resolveJid(target, cache) || target;
+        // الرسالة حسب السبب الفعلي
+        const msgs = everyoneResponded ? ABDUCT_SLOW : ABDUCT_IDLE;
         await sock.sendMessage(chatId, {
-            text:     pick(ABDUCT_MSGS)(phoneJid),
+            text:     pick(msgs)(phoneJid),
             mentions: mentionSet(phoneJid, target),
         });
         await wait(500);
@@ -183,7 +189,7 @@ const activeGames = new Map();
 // ══════════════════════════════════════════════════════════════
 const NovaUltra = {
     command:     "غزو",
-    description: "لعبة الغزو الفضائي Ultra",
+    description: "لعبة الغزو حيث الاضعف يطرد و الاقوى يصمد",
     group:       true,
     elite:       "off",
     prv:         false,
@@ -270,12 +276,11 @@ async function execute({ sock, msg, args, BIDS, sender }) {
         // البداية: منشن مخفي — النص بدون أرقام
         await sock.sendMessage(chatId, {
             text:
-`🛸 *--- إنـذار بـغـزو فـضـائـي ---*
+`🛸 *--- إنـذار بـغـزو ---*
 
-_تم رصد مركبات تقترب من المجموعة..._
+_تم رصد مركبات تقترب..._
 _القوانين:_ \`أسرع من يكتب الكود ينجو، والأبطأ يطرد!\`
 _📊 المشاركون:_ *${players.length}* لاعب
-🛡️ _المشرفون والنخبة محميون_
 
 ⏳ _سيتم إطلاق أول كود بعد_ *15 ثانية*`,
             mentions: allRaw,
@@ -337,6 +342,26 @@ _اكتب أحد الأكواد التالية:_
             const responded = await runRound(sock, chatId, players, validCodes);
             if (session.stop) break;
 
+            // ── إعلان قبل الطرد ──────────────────────────────────
+            const canKickPlayers = players.filter(p =>
+                !adminNums.has(numOf(p)) && !session.shielded.has(p)
+            );
+            const didNotList = canKickPlayers.filter(p => !responded.has(p));
+
+            if (didNotList.length === 0) {
+                // الكل أجاب → نطرد الأبطأ
+                await sock.sendMessage(chatId, {
+                    text: `⚡ *الكل أجاب هذه الجولة!*\n_لكن لا بد من تضحية... سنطرد الأبطأ!_ 🎯`,
+                });
+            } else {
+                // في ناس ما ردوا → نعلن عددهم
+                const count = Math.max(1, Math.ceil(didNotList.length * 0.2));
+                await sock.sendMessage(chatId, {
+                    text: `💀 *${didNotList.length} لاعب لم يستجب!*\n_سيتم اختطاف ${count} منهم..._`,
+                });
+            }
+            await wait(1500);
+
             // الطرد — الدروع القديمة لا تزال فعّالة
             const eliminated = await processElimination(
                 sock, chatId, players, responded, session, cache, adminNums
@@ -376,8 +401,8 @@ _اكتب أحد الأكواد التالية:_
             const winner = players[0];
             const phoneW = resolveJid(winner, cache) || winner;
             const WIN = [
-                j => `🏆 *تـهـانـيـنـا!* ${display(j)} _هو الناجي الوحيد والبطل._`,
-                j => `🥇 *الـبـطـل الـخـارق:* ${display(j)} _صمد أمام الغزو الفضائي._`,
+                j => `🏆 *تـهـانـيـنـا!* ${display(j)} _هو الناجي الوحيد._`,
+                j => `🥇 *الـنـاجـي الـاخـيـر:* ${display(j)} _صمد أمام الغزو._`,
             ];
             const top = Object.entries(session.speedLog)
                 .map(([jid, ts]) => ({

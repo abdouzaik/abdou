@@ -1805,11 +1805,38 @@ global.runHandlersParallel = async (sock, msg) => {
 };
 
 // ══════════════════════════════════════════════════════════════
-//  تنزيلات — Download Queue (حد أقصى 3 متزامنة)
+//  تنزيلات — Download Engine
+//  مستوحى من نمط settings.js:
+//  - downloadSessions Map (مثل activeSessions)
+//  - state machine: IDLE / PROCESSING / DONE / ERROR
+//  - قفل per-user + retry backoff + env config
 // ══════════════════════════════════════════════════════════════
-const DL_MAX_CONCURRENT = 3;          // حد عام: 3 تنزيلات في نفس الوقت
-let   _dlActive = 0;
-const _dlPerUser = new Set();          // حد لكل مستخدم: تنزيل واحد في نفس الوقت
+
+// ── قابل للتغيير من .env أو global._botConfig ────────────────
+const DL_MAX_MB         = parseInt(process.env.DL_MAX_MB  || '150');
+const DL_MAX_CONCURRENT = parseInt(process.env.DL_CONCURRENCY || '3');
+const DL_MAX_RETRIES    = parseInt(process.env.DL_RETRIES || '3');
+
+let   _dlActive  = 0;
+const _dlPerUser = new Set();   // قفل per-user: تنزيل واحد في نفس الوقت
+
+// ── Map للجلسات النشطة (نفس نمط activeSessions في settings.js) ──
+const downloadSessions = new Map();
+// هيكل كل session:
+// { chatId, userId, state, url, attempts, requestedAt, tempFiles: [] }
+
+// ── Exponential backoff helper ────────────────────────────────
+async function withRetry(fn, label = '', maxAttempts = DL_MAX_RETRIES) {
+    for (let i = 0; i < maxAttempts; i++) {
+        try { return await fn(); }
+        catch (e) {
+            const delay = Math.min(1000 * Math.pow(2, i), 8000);
+            console.log(`[retry] ${label} attempt ${i+1}/${maxAttempts} — ${e.message} — wait ${delay}ms`);
+            if (i < maxAttempts - 1) await new Promise(r => setTimeout(r, delay));
+            else throw e;
+        }
+    }
+}
 
 
 // ══════════════════════════════════════════════════════════════
@@ -1982,30 +2009,35 @@ const ytapi = {
 };
 
 
-//  Instagram Downloader — 3 طرق متتالية بدون API مدفوع
+//  Instagram Downloader — 5 طرق متتالية
 // ══════════════════════════════════════════════════════════════
 const igDownloader = {
 
-    // ── الطريقة 1: cobalt.tools (public API موثوق) ──────────
+    // ── الطريقة 1: cobalt v10 API ────────────────────────────
     async cobalt(url) {
         try {
+            // v10 يقبل Accept: application/json + POST
             const resp = await fetch('https://api.cobalt.tools/', {
                 method:  'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Accept':       'application/json',
-                    'User-Agent':   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Content-Type':  'application/json',
+                    'Accept':        'application/json',
+                    'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
                 },
-                body:   JSON.stringify({ url, downloadMode: 'auto', filenameStyle: 'basic' }),
-                signal: AbortSignal.timeout(20_000),
+                body:   JSON.stringify({
+                    url,
+                    videoQuality:    '1080',
+                    audioFormat:     'mp3',
+                    downloadMode:    'auto',
+                    filenameStyle:   'basic',
+                    disableMetadata: true,
+                }),
+                signal: AbortSignal.timeout(25_000),
             });
             if (!resp.ok) return null;
             const json = await resp.json();
-            // status: redirect → direct link | tunnel → streamed
-            if ((json.status === 'redirect' || json.status === 'tunnel') && json.url) {
+            if ((json.status === 'redirect' || json.status === 'tunnel') && json.url)
                 return { url: json.url, title: 'instagram', ext: 'mp4' };
-            }
-            // status: picker → carousel (يرجع مصفوفة)
             if (json.status === 'picker' && json.picker?.length) {
                 const first = json.picker.find(p => p.type === 'video') || json.picker[0];
                 if (first?.url) return { url: first.url, title: 'instagram', ext: 'mp4', isPhoto: first.type === 'photo' };
@@ -2014,73 +2046,123 @@ const igDownloader = {
         } catch { return null; }
     },
 
-    // ── الطريقة 2: snapsave.app (web scraper) ───────────────
-    async snapsave(url) {
+    // ── الطريقة 2: sssinstagram (موثوق لعام 2024) ───────────
+    async sss(url) {
         try {
-            const resp = await fetch('https://snapsave.app/action.php', {
+            const resp = await fetch('https://v3.sssinstagram.com/getInfo', {
                 method:  'POST',
                 headers: {
-                    'Content-Type':  'application/x-www-form-urlencoded',
+                    'Content-Type':  'application/json',
                     'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Origin':        'https://snapsave.app',
-                    'Referer':       'https://snapsave.app/',
-                    'Accept':        '*/*',
-                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Origin':        'https://sssinstagram.com',
+                    'Referer':       'https://sssinstagram.com/',
                 },
-                body:   new URLSearchParams({ url }),
-                signal: AbortSignal.timeout(15_000),
+                body:   JSON.stringify({ url }),
+                signal: AbortSignal.timeout(20_000),
             });
             if (!resp.ok) return null;
-            const html = await resp.text();
-            // استخراج رابط mp4 مباشر من HTML
-            const mp4Match = html.match(/href="(https?:\/\/[^"]+\.mp4[^"]*)"/i)
-                          || html.match(/href="(https?:\/\/[^"]+(?:videoplayback|cdninstagram|fbcdn)[^"]*)"/i);
-            if (mp4Match?.[1]) return { url: decodeURIComponent(mp4Match[1].replace(/&amp;/g, '&')), title: 'instagram', ext: 'mp4' };
+            const json = await resp.json();
+            // يرجع items[] أو url مباشر
+            const items = json?.data?.items || json?.items || [];
+            if (items.length) {
+                const vid = items.find(i => i.url && (i.type === 'video' || i.url.includes('.mp4')))
+                         || items[0];
+                if (vid?.url) return { url: vid.url, title: 'instagram', ext: 'mp4', isPhoto: vid.type === 'photo' };
+            }
+            if (json?.data?.url || json?.url) {
+                const u = json?.data?.url || json?.url;
+                return { url: u, title: 'instagram', ext: 'mp4' };
+            }
             return null;
         } catch { return null; }
     },
 
-    // ── الطريقة 3: savefrom (fallback قديم) ─────────────────
+    // ── الطريقة 3: snapinsta.app ─────────────────────────────
+    async snapinsta(url) {
+        try {
+            const resp = await fetch('https://snapinsta.app/api', {
+                method:  'POST',
+                headers: {
+                    'Content-Type':   'application/x-www-form-urlencoded',
+                    'User-Agent':     'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                    'Origin':         'https://snapinsta.app',
+                    'Referer':        'https://snapinsta.app/',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                body:   new URLSearchParams({ url, lang: 'en' }),
+                signal: AbortSignal.timeout(18_000),
+            });
+            if (!resp.ok) return null;
+            const json = await resp.json();
+            // يرجع { status, data: { url } } أو data[]
+            const link = json?.data?.url || json?.url;
+            if (link && link.includes('.mp4')) return { url: link, title: 'instagram', ext: 'mp4' };
+            // carousel
+            if (Array.isArray(json?.data)) {
+                const vid = json.data.find(i => i.url?.includes('.mp4')) || json.data[0];
+                if (vid?.url) return { url: vid.url, title: 'instagram', ext: 'mp4' };
+            }
+            return null;
+        } catch { return null; }
+    },
+
+    // ── الطريقة 4: RapidAPI instagram-scraper-api2 ───────────
+    async rapid(url) {
+        const KEY  = '172bbf881fmsh261cc0bdbbbf065p1c32e9jsn68068d5e45a5';
+        const HOST = 'instagram-scraper-api2.p.rapidapi.com';
+        try {
+            const shortcode = url.match(/(?:reel|p|tv)\/([A-Za-z0-9_-]+)/)?.[1];
+            if (!shortcode) return null;
+            const resp = await fetch(
+                `https://${HOST}/v1/post_info?code_or_id_or_url=${shortcode}`,
+                { headers: { 'x-rapidapi-host': HOST, 'x-rapidapi-key': KEY },
+                  signal: AbortSignal.timeout(20_000) }
+            );
+            if (!resp.ok) return null;
+            const data = (await resp.json())?.data || {};
+            if (data.video_url) return { url: data.video_url, title: data.caption_text||'instagram', ext: 'mp4' };
+            const vid = (data.carousel_media||[]).find(i => i.video_url);
+            if (vid?.video_url) return { url: vid.video_url, title: 'instagram', ext: 'mp4' };
+            const img = data.thumbnail_url || data.image_versions2?.candidates?.[0]?.url;
+            if (img) return { url: img, title: 'instagram', ext: 'jpg', isPhoto: true };
+            return null;
+        } catch { return null; }
+    },
+
+    // ── الطريقة 5: savefrom fallback ─────────────────────────
     async savefrom(url) {
         try {
-            const encoded = encodeURIComponent(url);
-            const resp    = await fetch('https://worker.sf-tools.com/savefrom?url=' + encoded, {
+            const resp = await fetch('https://worker.sf-tools.com/savefrom?url=' + encodeURIComponent(url), {
                 headers: {
-                    'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Accept':          'application/json, text/javascript, */*; q=0.01',
-                    'Referer':         'https://en.savefrom.net/',
-                    'Origin':          'https://en.savefrom.net',
-                    'Accept-Language': 'en-US,en;q=0.9',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                    'Referer':    'https://en.savefrom.net/',
+                    'Origin':     'https://en.savefrom.net',
                 },
                 signal: AbortSignal.timeout(15_000),
             });
             if (!resp.ok) return null;
             const data = await resp.json();
-            if (!data?.url?.length) return null;
-            const video = data.url
-                .filter(u => u.url && (u.ext === 'mp4' || (u.type || '').includes('video')))
-                .sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0))[0];
-            return video?.url ? { url: video.url, title: data.meta?.title || 'instagram', ext: 'mp4' } : null;
+            const video = (data?.url || [])
+                .filter(u => u.url && (u.ext === 'mp4' || (u.type||'').includes('video')))
+                .sort((a,b) => (parseInt(b.quality)||0) - (parseInt(a.quality)||0))[0];
+            return video?.url ? { url: video.url, title: data.meta?.title||'instagram', ext: 'mp4' } : null;
         } catch { return null; }
     },
 
     // ── تجربة الطرق بالترتيب ────────────────────────────────
     async download(url) {
         const methods = [
-            { name: 'cobalt',    fn: () => this.cobalt(url)   },
-            { name: 'snapsave',  fn: () => this.snapsave(url) },
-            { name: 'savefrom',  fn: () => this.savefrom(url) },
+            { name: 'cobalt',   fn: () => this.cobalt(url)    },
+            { name: 'sss',      fn: () => this.sss(url)       },
+            { name: 'snapinsta',fn: () => this.snapinsta(url) },
+            { name: 'rapid',    fn: () => this.rapid(url)     },
+            { name: 'savefrom', fn: () => this.savefrom(url)  },
         ];
         for (const { name, fn } of methods) {
             try {
                 const res = await fn();
-                if (res?.url) {
-                    console.log(`[Instagram] نجح بـ ${name}`);
-                    return res;
-                }
-            } catch (e) {
-                console.error(`[Instagram] فشل ${name}:`, e.message);
-            }
+                if (res?.url) { console.log(`[Instagram] ✅ ${name}`); return res; }
+            } catch (e) { console.error(`[Instagram] ❌ ${name}:`, e.message); }
         }
         return null;
     },
@@ -3510,19 +3592,29 @@ ${lines}
         const icon     = audioOnly ? '🎵' : '🎬';
         const userKey  = msg?.key?.participant || chatId;
 
-        // ── حد لكل مستخدم: تنزيل واحد في نفس الوقت ──
+        // ── قفل per-user (نفس منطق activeSessions في settings.js) ──
         if (_dlPerUser.has(userKey)) {
             reactWait(sock, m);
             await update(`⏳ *طلبك السابق لم ينتهِ بعد*\nانتظر حتى ينتهي ثم أعد المحاولة.\n\n🔙 *رجوع*`);
             return;
         }
 
-        // ── حد عام: 3 تنزيلات متزامنة ──
+        // ── حد عام ──
         if (_dlActive >= DL_MAX_CONCURRENT) {
             reactWait(sock, m);
             await update(`⏳ *البوت مشغول بـ ${_dlActive} تنزيل*\nانتظر قليلاً وأعد المحاولة.\n\n🔙 *رجوع*`);
             return;
         }
+
+        // ── إنشاء session (مثل settings.js) ──────────────────────
+        const session = {
+            chatId, userId: userKey, url, audioOnly,
+            state:       'PROCESSING',
+            requestedAt: Date.now(),
+            attempts:    0,
+            tempFiles:   [],
+        };
+        downloadSessions.set(chatId, session);
 
         reactWait(sock, m);
         await update(`${icon} *جاري تحميل ${platform}...*\nقد يأخذ بضع ثوانٍ.`);
@@ -3589,10 +3681,12 @@ ${lines}
 
                 const title = videoInfo?.title || 'يوتيوب';
 
-                // ── تحميل بـ youtube-mp41 (RapidAPI) ──
-                const apiResult = audioOnly
-                    ? await ytmp41.audio(url).catch(() => null)
-                    : await ytmp41.video(url, '480').catch(() => null);
+                // ── تحميل بـ youtube-mp41 (RapidAPI) + retry backoff ──
+                session.attempts = 0;
+                const apiResult = await withRetry(
+                    () => audioOnly ? ytmp41.audio(url) : ytmp41.video(url, '480'),
+                    'ytmp41'
+                ).catch(() => null);
 
                 if (apiResult?.url) {
                     try {
@@ -3725,7 +3819,7 @@ ${lines}
                     return;
                 } catch {
                     reactFail(sock, m);
-                    await update(`❌ *فشل تحميل انستقرام*\n⚠️ تأكد أن المنشور عام وليس خاصاً.\n\n🔙 *رجوع*`);
+                    await update(`❌ *فشل تحميل انستقرام*\n⚠️ المحتوى الخاص لا يمكن تنزيله.\n💡 تأكد أن المنشور عام أو جرّب /_تحميل برابط مختلف.\n\n🔙 *رجوع*`);
                     return;
                 }
             }
@@ -3764,9 +3858,9 @@ ${lines}
             const isAudio  = ['mp3','m4a','ogg','aac','opus','wav'].includes(ext);
             const isImage  = ['jpg','jpeg','png','webp','gif'].includes(ext);
 
-            if (fileSize > 150 * 1024 * 1024) {
+            if (fileSize > DL_MAX_MB * 1024 * 1024) {
                 cleanup();
-                return update('❌ الملف أكبر من 150MB.\n\n🔙 *رجوع*');
+                return update(`❌ الملف أكبر من ${DL_MAX_MB}MB.\n\n🔙 *رجوع*`);
             }
 
             const buffer = await fs.promises.readFile(filePath); cleanup();
@@ -3807,8 +3901,16 @@ ${lines}
                 hint = '\n🗑️ المحتوى غير متاح.';
             await update(`❌ *فشل التحميل*\n${errText.slice(0, 120)}${hint}\n\n🔙 *رجوع*`);
         } finally {
+            // cleanup (نفس sock.ev.off + activeSessions.delete في settings.js)
             _dlActive--;
             _dlPerUser.delete(userKey);
+            session.state = session.state === 'PROCESSING' ? 'DONE' : session.state;
+            downloadSessions.delete(chatId);
+            // مسح الملفات المؤقتة المسجّلة في session
+            for (const f of (session.tempFiles || [])) {
+                try { fs.removeSync(f); } catch {}
+            }
+            console.log(`[dl:done] ${chatId} — state:${session.state} time:${Date.now() - session.requestedAt}ms`);
         }
     }
 
@@ -4022,16 +4124,19 @@ ${nav}
         const resolvedUsers = [];
         for (const [raw, count] of userEntries) {
             const phoneJid = resolveJid(raw);
-            const display  = normalizeJid(phoneJid);
-            resolvedUsers.push({ jid: phoneJid, display, count });
+            // نستخدم phoneJid لو صالح، وإلا raw (LID) — @رقم دائماً في النص
+            const displayNum = normalizeJid(phoneJid || raw);
+            resolvedUsers.push({ raw, jid: phoneJid, displayNum, count });
         }
 
         const topUsers = resolvedUsers
-            .map((u, i) => `${i+1}. @${u.display} • *${u.count}* رسالة`)
+            .map((u, i) => `${i+1}. @${u.displayNum} • *${u.count}* رسالة`)
             .join('\n') || 'لا يوجد';
-        const mentions = resolvedUsers
-            .map(u => u.jid)
-            .filter(j => j.endsWith('@s.whatsapp.net'));
+
+        // نفس مبدأ elite.js: phoneJid + raw في mentions لضمان المنشن الأزرق
+        const mentions = [...new Set(
+            resolvedUsers.flatMap(u => [u.jid, u.raw].filter(Boolean))
+        )];
 
         const up = process.uptime();
         const h = Math.floor(up/3600), mm = Math.floor((up%3600)/60), ss = Math.floor(up%60);
