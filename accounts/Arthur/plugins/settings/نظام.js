@@ -639,6 +639,7 @@ async function isBotGroupAdmin(sock, chatId) {
 // ── cooldown لـ antiPrivate ──
 const _pvtCooldown  = new Map();
 const activeSessions = new Map(); // ← moved here: يجب أن تكون قبل setInterval
+global.activeSessions = activeSessions; // ← يُتاح لـ messages.js و تصفير.js
 
 // ── Rate Limiter — الحد: 20 رسالة/دقيقة لكل مستخدم ──
 const _rateMap = new Map();
@@ -2555,8 +2556,15 @@ async function execute({ sock, msg }) {
     };
 
     const cleanup = () => {
+        // نزيل الـ listener الأصلي والـ wrapped كلاهما
         sock.ev.off('messages.upsert', listener);
+        const sess = activeSessions.get(chatId);
+        if (sess?.listener && sess.listener !== listener) {
+            sock.ev.off('messages.upsert', sess.listener);
+        }
+        // نوقف كل المؤقتات
         clearTimeout(timeout);
+        if (sess?.reactClearTimer) clearTimeout(sess.reactClearTimer);
         activeSessions.delete(chatId);
     };
 
@@ -4353,11 +4361,12 @@ ${list}
     sock.ev.on('messages.upsert', wrappedListener);
 
     activeSessions.set(chatId, {
-        listener: wrappedListener,
+        listener:        wrappedListener,
         timeout,
-        cleanupFn: cleanup,
-        startTime: Date.now(),
-        lastActivity: Date.now(),
+        reactClearTimer,
+        cleanupFn:       cleanup,
+        startTime:       Date.now(),
+        lastActivity:    Date.now(),
     });
 }
 

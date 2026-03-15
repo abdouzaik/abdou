@@ -169,6 +169,7 @@ export async function initializePlugins(themeColor) {
 export async function handleMessages(sock, { messages }) {
     sockGlobal = { ...sock, ...elitePro, ...waUtils };
     if (!sockGlobal.ev && sock.ev) sockGlobal.ev = sock.ev;
+    global._sockGlobal = sockGlobal; // ← يُتاح لـ تصفير.js للوصول لـ activeListeners
 
     attachSystemLogger(sock);
 
