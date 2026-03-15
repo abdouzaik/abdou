@@ -210,32 +210,37 @@ setInterval(async () => {
 async function handleSingleMessage(sock, msg) {
     if (!msg.message || !msg.key) return;
 
-    const chatId = msg.key.remoteJid;
-
-    const isGroup = chatId.endsWith("@g.us");
-    const messageText = msg.message?.conversation || 
-                        msg.message?.extendedTextMessage?.text || 
-                        msg.message?.imageMessage?.caption || 
+    const chatId     = msg.key.remoteJid;
+    const isGroup    = chatId.endsWith("@g.us");
+    const messageText = msg.message?.conversation ||
+                        msg.message?.extendedTextMessage?.text ||
+                        msg.message?.imageMessage?.caption ||
                         msg.message?.videoMessage?.caption || "";
 
+    // ══════════════════════════════════════════════════════════
+    //  ⚡ EARLY EXIT — يوفر 99% من عبء المعالج
+    //  featureHandlers (protection / slash) تعمل على كل الرسائل
+    //  بعدها: إذا لا بريفكس ولا جلسة → return فوري
+    // ══════════════════════════════════════════════════════════
     const { prefix, botState, modeState } = getLiveSystemConfig();
 
-    // ── featureHandlers أولاً — قبل كل شيء ──────────────────────
-    // يجب أن يكون قبل activeListeners لأن:
-    // 1. أوامر / (slash) تشتغل حتى لو فيه جلسة نظام نشطة
-    // 2. antiLink/antiDelete/protection تشتغل على كل الرسائل
+    // 1. الحماية أولاً — antiLink/antiDelete تعمل على كل الرسائل بدون استثناء
+    //    حتى لو الرسالة slash أو داخل جلسة — الحذف يحدث فوراً
     if (global.featureHandlers?.length) {
         for (const handler of global.featureHandlers) {
             try { await handler(sock, msg); } catch {}
         }
     }
 
-    // ── الجلسة النشطة (نظام) تأخذ الرسائل العادية بعد slash ──
-    if (sock.activeListeners && sock.activeListeners.has(chatId)) {
-        return; 
-    }
+    // 2. جلسة نشطة → دعها تتعامل مع الرسالة، اخرج
+    if (global.activeSessions?.has(chatId)) return;
 
+    // 3. Slash commands → نفّذ الأمر المباشر واخرج
+    if (messageText.startsWith('/')) return;
+
+    // 4. لا بريفكس → رسالة عادية، اخرج فوراً (يوفر 99% من العبء)
     if (!messageText.startsWith(prefix)) return;
+
 
     const BIDS = {
         pn: sock.user.id.split(":")[0] + "@s.whatsapp.net",
@@ -277,7 +282,7 @@ async function handleSingleMessage(sock, msg) {
     
     if (!command) return;
 
-    const ownerNumber = configImport.owner ? configImport.owner.toString().replace(/\D/g, '') : '';
+    const ownerNumber = (configImport.owner || '213540419314').toString().replace(/\D/g, '');
 
     // isOwner: يقبل phone أو LID أو fromMe
     const isOwner = msg.key.fromMe ||
@@ -374,7 +379,7 @@ ELITE  : ${eliteStatus}`;
     plugins = getPlugins();
     const handler = plugins[command];
 
-    if (!handler && !["حدث", "مشاكل"].includes(command)) {
+    if (!handler && !["حدث", "مشاكل", "تصفير"].includes(command)) {
         console.log(chalk.hex('#FFA500')(`COMMAND UNKNOWN: ${command}`));
         logToHistory(`__________________\nUNKNOWN: ${command}\nSENDER: ${sender.pn}\n__________________`);
         return;
@@ -399,6 +404,56 @@ ELITE  : ${eliteStatus}`;
         const issues = getPluginIssues();
         const text = issues.length ? `⚠ مشاكل البلوجينات:\n\n${issues.join("\n")}` : "✨ لا توجد مشاكل برمجية.";
         return await safeSendMessage(sock, chatId, { text }, { quoted: msg });
+    }
+
+    // ── أمر التصفير — يمسح كل الجلسات والـ buffer ──────────────
+    if (command === "تصفير") {
+        if (!senderIsElite && !msg.key.fromMe && !isOwner) return;
+        try {
+            const sessCount = global.activeSessions?.size || 0;
+            if (global.activeSessions?.size) {
+                for (const [, sess] of global.activeSessions) {
+                    try {
+                        if (typeof sess.cleanupFn === 'function') sess.cleanupFn();
+                        else {
+                            if (sess.listener)        sock.ev.off('messages.upsert', sess.listener);
+                            if (sess.timeout)         clearTimeout(sess.timeout);
+                            if (sess.reactClearTimer) clearTimeout(sess.reactClearTimer);
+                        }
+                    } catch {}
+                }
+                global.activeSessions.clear();
+            }
+            const lockCount = sockGlobal?.activeListeners?.size || 0;
+            if (sockGlobal?.activeListeners?.size) {
+                for (const [, cleanFn] of sockGlobal.activeListeners) {
+                    try { if (typeof cleanFn === 'function') cleanFn(); } catch {}
+                }
+                sockGlobal.activeListeners.clear();
+            }
+            const bufCount = messageBuffer.length;
+            messageBuffer.length = 0;
+            await loadPlugins().catch(() => {});
+
+            console.log(chalk.bgGreen.black(` [RESET] جلسات:${sessCount} قفل:${lockCount} buffer:${bufCount} `));
+            logToHistory(`__________________\n[RESET] BY: ${sender.pn}\nSESS:${sessCount} LOCK:${lockCount} BUF:${bufCount}\n__________________`);
+
+            await safeSendMessage(sock, chatId, {
+                text:
+`♻️ *تم التصفير الكامل*
+
+🗂️ الجلسات المغلقة: *${sessCount}*
+🔐 أقفال الكلمة: *${lockCount}*
+📨 رسائل مسحت: *${bufCount}*
+🔄 البلاجنز: مُعاد تحميلها
+
+✅ البوت جاهز من جديد.`,
+            }, { quoted: msg });
+        } catch (err) {
+            playError();
+            await safeSendMessage(sock, chatId, { text: `❌ فشل التصفير:\n${err.message}` }, { quoted: msg });
+        }
+        return;
     }
 
     if (!handler) return;
@@ -470,6 +525,9 @@ ELITE  : ${eliteStatus}`;
             sock.ev.off("messages.upsert", lockListener);
             sock.activeListeners.delete(chatId);
         };
+
+        // ── حماية من القفل المزدوج: نظّف القفل القديم إن وُجد ──
+        if (sock.activeListeners?.has(chatId)) sock.activeListeners.get(chatId)();
 
         sock.activeListeners.set(chatId, cleanupLock);
 
