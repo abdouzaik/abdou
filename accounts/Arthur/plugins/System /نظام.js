@@ -20,7 +20,7 @@ import { handleGeneral, showStats, showProtMenu,
          showCmdTools }                               from './s_عام.js';
 import { handleAdmin,   showAdminMenu }               from './s_إدارة.js';
 import { handleBot,     showBotMenu }                 from './s_بوت.js';
-import './system/_protection.js';
+import './_protection.js';
 
 const NovaUltra = {
     command: 'نظام', description: 'نظام البوت الشامل',
