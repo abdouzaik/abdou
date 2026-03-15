@@ -755,10 +755,11 @@ const activeSessions = new Map(); // ← moved here: يجب أن تكون قبل
 global.activeSessions = activeSessions; // ← يُتاح لـ تصفير.js
 
 // ── ضبط owner من config.js ──────────────────────────
-// لو _botConfig.owner فارغ → البوت نفسه يكون الأونر
+// الأولوية: config.js → _botConfig الموجود → البوت نفسه
 if (!global._botConfig) global._botConfig = {};
-if (!global._botConfig.owner && configObj?.owner) {
-    global._botConfig.owner = configObj.owner;
+// دائماً خذ owner من config.js إذا كان موجوداً (يضمن sync)
+if (configObj?.owner) {
+    global._botConfig.owner = String(configObj.owner).replace(/\D/g, '');
 }
 // fallback: رقم البوت نفسه (يُضبط بعد اتصال البوت)
 // يُحدَّث في messages.js أو index.js عند open connection
@@ -2492,29 +2493,30 @@ async function ytdlpDownload(url, opts = {}) {
 const MAIN_MENU =
 `✧━── ❝ 𝐍𝐎𝐕𝐀 𝐒𝐘𝐒𝐓𝐄𝐌 ❞ ──━✧
 
-✦ *نخبة*
-\`♦️ ادارة قائمة النخبة\`
-
-✦ *بلاجنز*
-\`🧩 ادارة وعرض الاوامر\`
-
 ✦ *تنزيلات*
 \`⬇️ تنزيل من يوتيوب وانستقرام وغيرها\`
 
 ✦ *إحصاءات*
 \`📊 تقارير الاستخدام\`
 
+┄┄┄┄ 👑 للنخبة ┄┄┄┄
+
+✦ *نخبة*
+\`👑 ادارة قائمة النخبة\`
+
+✦ *بلاجنز*
+\`🧩 ادارة وعرض الاوامر\`
+
 ✦ *حماية*
 \`🛡️ انظمة الحماية\`
-
-✦ *بوت*
-\`🤖 إدارة حساب البوت\`
 
 ✦ *إدارة*
 \`🛠️ إدارة المجموعات\`
 
-✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`;
+✦ *بوت*
+\`🤖 إعدادات البوت\`
 
+✧━── *-𝙰𝚛𝚝𝚑𝚞𝚛_𝙱𝚘𝚝-* ──━✧`;
 // activeSessions معرّفة في بداية الملف قبل setInterval
 
 // ══════════════════════════════════════════════════════════════
@@ -2523,7 +2525,7 @@ const MAIN_MENU =
 const NovaUltra = {
     command:     'نظام',
     description: 'نظام البوت الشامل',
-    elite:       'on',
+    elite:       'off', // مفتوح للكل — الفروع المقيدة تُفحص داخلياً
     group:       false,
     prv:         false,
     lock:        'off',
@@ -2660,6 +2662,13 @@ ${who} يستخدم النظام الآن.
         }
     };
 
+    // isOwner helper — البوت نفسه أو رقم الأونر من config
+    const isOwner = () => {
+        if (m?.key?.fromMe || msg.key.fromMe) return true;
+        const ownerNum = global._botConfig?.owner || '';
+        return ownerNum && normalizeJid(sender) === normalizeJid(ownerNum);
+    };
+
     const cleanup = () => {
         sock.ev.off('messages.upsert', listener);
         clearTimeout(timeout);
@@ -2709,13 +2718,78 @@ ${who} يستخدم النظام الآن.
         // MAIN
         // ══════════════════════════════════════════════════
         if (state === 'MAIN') {
-            if (text === 'نخبة')                          { pushState('MAIN', () => update(MAIN_MENU)); await showEliteMenu();   state = 'ELITE';    return; }
-            if (text === 'بلاجنز')                        { pushState('MAIN', () => update(MAIN_MENU)); await showPluginsMenu(); state = 'PLUGINS';  return; }
+            // ── فحص النخبة المحكم ─────────────────────────────
+            // المشكلة: m.key.participant قد يكون LID في واتساب الجديد
+            // الحل: نحاول بـ phone JID أولاً ثم LID ثم نقرأ الملف مباشرة
+            const _checkElite = async () => {
+                if (m.key.fromMe) return true;
+                // فحص الأونر
+                const ownerNum = global._botConfig?.owner || '';
+                if (ownerNum && normalizeJid(newSender) === normalizeJid(ownerNum)) return true;
+
+                // استخراج كلا الشكلين من الرسالة
+                const phoneCand = m.key.participantAlt   // phone JID المباشر (Baileys جديد)
+                               || (newSender.endsWith('@s.whatsapp.net') ? newSender : null);
+                const lidCand   = newSender.endsWith('@lid') ? newSender : null;
+
+                // 1. جرّب مع phone JID
+                if (phoneCand) {
+                    try {
+                        const r = await sock.isElite?.({ sock, id: phoneCand });
+                        if (r) return true;
+                    } catch {}
+                }
+
+                // 2. جرّب مع LID
+                if (lidCand) {
+                    try {
+                        const r = await sock.isElite?.({ sock, id: lidCand });
+                        if (r) return true;
+                    } catch {}
+                }
+
+                // 3. قراءة مباشرة من elite-pro.json (fallback موثوق)
+                try {
+                    const ep    = readJSON(path.join(BOT_DIR, '../../handlers/elite-pro.json'), {});
+                    const jids  = ep.jids  || [];
+                    const lids  = ep.lids  || [];
+                    const twice = ep.twice || {};
+
+                    const senderNum = normalizeJid(newSender);
+
+                    // فحص phone JID
+                    if (phoneCand && jids.some(j => normalizeJid(j) === senderNum)) return true;
+                    // فحص LID
+                    if (lidCand   && lids.some(l => normalizeJid(l) === senderNum)) return true;
+                    // فحص عبر twice map
+                    const mapped = twice[newSender] || twice[phoneCand] || twice[lidCand];
+                    if (mapped) {
+                        const mappedNum = normalizeJid(mapped);
+                        if (jids.some(j => normalizeJid(j) === mappedNum)) return true;
+                        if (lids.some(l => normalizeJid(l) === mappedNum)) return true;
+                    }
+                } catch {}
+
+                return false;
+            };
+
+            // ── فروع متاحة للجميع ──────────────────────────────
             if (text === 'تنزيلات')                       { pushState('MAIN', () => update(MAIN_MENU)); await showDlMenu();      state = 'DL_MENU';  return; }
             if (text === 'إحصاءات' || text === 'احصاءات') { pushState('MAIN', () => update(MAIN_MENU)); await showStats();       state = 'STATS';    return; }
-            if (text === 'حماية')                         { pushState('MAIN', () => update(MAIN_MENU)); await showProtMenu();    state = 'PROT';     return; }
-            if (text === 'بوت')                           { pushState('MAIN', () => update(MAIN_MENU)); await showBotMenu();     state = 'BOT';      return; }
-            if (text === 'إدارة')                         { pushState('MAIN', () => update(MAIN_MENU)); await showAdminMenu();   state = 'ADMIN';    return; }
+
+            // ── فروع النخبة فقط ────────────────────────────────
+            const eliteOnlyCmd = ['نخبة','بلاجنز','حماية','بوت','إدارة'].includes(text);
+            if (eliteOnlyCmd) {
+                if (!(await _checkElite())) {
+                    await update('🚫 *هذا القسم للنخبة فقط*\n\n✦ *تنزيلات* و *إحصاءات* متاحان للجميع\n\n🏠 *الرئيسية*');
+                    return;
+                }
+                if (text === 'نخبة')   { pushState('MAIN', () => update(MAIN_MENU)); await showEliteMenu();   state = 'ELITE';    return; }
+                if (text === 'بلاجنز') { pushState('MAIN', () => update(MAIN_MENU)); await showPluginsMenu(); state = 'PLUGINS';  return; }
+                if (text === 'حماية')  { pushState('MAIN', () => update(MAIN_MENU)); await showProtMenu();    state = 'PROT';     return; }
+                if (text === 'بوت')    { pushState('MAIN', () => update(MAIN_MENU)); await showBotMenu();     state = 'BOT';      return; }
+                if (text === 'إدارة')  { pushState('MAIN', () => update(MAIN_MENU)); await showAdminMenu();   state = 'ADMIN';    return; }
+            }
             return;
         }
 
@@ -4142,27 +4216,38 @@ ${nav}
             .sort((a,b) => b[1]-a[1]).slice(0,5)
             .map(([k,v],i) => `${i+1}. ${k}: *${v}*`).join('\n') || 'لا يوجد';
 
-        // ── دمج مزدوج: twice map + participants لحل LID → phone JID ──
+        // ── دمج ثلاثي: twice map + participants + config owner ──
         let twiceMap = {};
         try {
             const ePath = path.join(BOT_DIR, '../../handlers/elite-pro.json');
             twiceMap = readJSON(ePath, {}).twice || {};
-        } catch (e) { if (e?.message) console.error('[catch]', e.message); }
+        } catch (e) { if (e?.message) console.error('[showStats/twice]', e.message); }
 
         let participants = [];
         if (chatId.endsWith('@g.us')) {
             try {
                 const meta = await sock.groupMetadata(chatId);
                 participants = meta.participants || [];
-            } catch (e) { if (e?.message) console.error('[catch]', e.message); }
+            } catch (e) { if (e?.message) console.error('[showStats/meta]', e.message); }
         }
 
-        const resolveJid = (raw) => {
-            // 1. phone JID مباشرة
-            if (raw.endsWith('@s.whatsapp.net')) return raw;
+        // رقم الهاتف الصالح: 7-15 رقم (LID أطول من ذلك)
+        const isValidPhone = (numStr) => numStr.length >= 7 && numStr.length <= 15;
 
-            // 2. LID → twice map
-            if (raw.endsWith('@lid') && twiceMap[raw]) return twiceMap[raw];
+        const resolveJid = (raw) => {
+            // 1. phone JID مباشرة — تحقق أن الرقم صالح (مش LID)
+            if (raw.endsWith('@s.whatsapp.net')) {
+                const num = normalizeJid(raw);
+                if (isValidPhone(num)) return { jid: raw, resolved: true };
+                return { jid: null, resolved: false }; // LID متنكر كـ phone
+            }
+
+            // 2. LID → twice map (الأموثق)
+            if (raw.endsWith('@lid') && twiceMap[raw]) {
+                const phoneJid = twiceMap[raw];
+                const num = normalizeJid(phoneJid);
+                if (isValidPhone(num)) return { jid: phoneJid, resolved: true };
+            }
 
             // 3. LID → participants
             if (raw.endsWith('@lid')) {
@@ -4170,28 +4255,41 @@ ${nav}
                 const found  = participants.find(p =>
                     normalizeJid(p.lid || '') === lidNum || normalizeJid(p.id) === lidNum
                 );
-                if (found?.id?.endsWith('@s.whatsapp.net')) return found.id;
+                if (found?.id?.endsWith('@s.whatsapp.net')) {
+                    const num = normalizeJid(found.id);
+                    if (isValidPhone(num)) return { jid: found.id, resolved: true };
+                }
             }
 
-            // 4. fallback: استخراج رقم نظيف
+            // 4. fallback رقم نظيف — قبول فقط لو طول صالح
             const num = raw.split('@')[0].split(':')[0].replace(/\D/g, '');
-            return num.length >= 7 ? num + '@s.whatsapp.net' : raw;
+            if (isValidPhone(num)) return { jid: num + '@s.whatsapp.net', resolved: true };
+
+            // 5. LID غير محلول — نتجاهله في المنشنات
+            return { jid: null, resolved: false };
         };
 
         const userEntries = Object.entries(s.users||{}).sort((a,b) => b[1]-a[1]).slice(0,5);
         const resolvedUsers = [];
         for (const [raw, count] of userEntries) {
-            const phoneJid = resolveJid(raw);
-            const display  = normalizeJid(phoneJid);
-            resolvedUsers.push({ jid: phoneJid, display, count });
+            const { jid, resolved } = resolveJid(raw);
+            if (resolved && jid) {
+                resolvedUsers.push({ jid, display: normalizeJid(jid), count, mention: true });
+            } else {
+                // LID غير محلول — نعرضه بدون منشن
+                const rawNum = normalizeJid(raw);
+                resolvedUsers.push({ jid: null, display: rawNum.slice(0,8) + '…', count, mention: false });
+            }
         }
 
         const topUsers = resolvedUsers
-            .map((u, i) => `${i+1}. @${u.display} • *${u.count}* رسالة`)
+            .map((u, i) => u.mention
+                ? `${i+1}. @${u.display} • *${u.count}* رسالة`
+                : `${i+1}. ${u.display} • *${u.count}* رسالة`)
             .join('\n') || 'لا يوجد';
         const mentions = resolvedUsers
-            .map(u => u.jid)
-            .filter(j => j.endsWith('@s.whatsapp.net'));
+            .filter(u => u.mention && u.jid)
+            .map(u => u.jid);
 
         const up = process.uptime();
         const h = Math.floor(up/3600), mm = Math.floor((up%3600)/60), ss = Math.floor(up%60);
