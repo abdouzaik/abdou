@@ -1,14 +1,3 @@
-// ══════════════════════════════════════════════════════════════
-//  نظام.js — النسخة المصححة النهائية
-//  نخبة | بلاجنز | تنزيلات | إحصاءات | حماية | اوامر | إدارة
-//  + slash handler /امر مباشر
-//
-//  الإصلاحات:
-//  ☑️ antiPrivate  — حظر صحيح بـ JID مُنظَّف + cooldown محكم
-//  ☑️ فيديو >70MB  — يُبعَث مستنداً بدل رفضه
-//  ☑️ antiLink     — يرصد الروابط في النصوص والكابشنات كلها
-//  ☑️ antiDelete   — يعرض النوع + المحتوى + منشن من حذف
-// ══════════════════════════════════════════════════════════════
 import fs            from 'fs-extra';
 import path          from 'path';
 import os            from 'os';
@@ -42,11 +31,10 @@ const BAN_FILE          = path.join(DATA_DIR, 'banned_users.json');
 
 fs.ensureDirSync(DATA_DIR);
 
-// ══════════════════════════════════════════════════════════════
 //  إصلاح 4: مسح مجلدات dl_ المؤقتة عند بدء التشغيل
 //  يضمن عدم تراكم الملفات لو أُغلق البوت أثناء التحميل
-// ══════════════════════════════════════════════════════════════
-(async () => {
+
+(async () => 
     try {
         const tmpDir = os.tmpdir();
         const entries = await fs.promises.readdir(tmpDir);
@@ -58,9 +46,6 @@ fs.ensureDirSync(DATA_DIR);
     } catch {}
 })();
 
-// ══════════════════════════════════════════════════════════════
-//  helpers
-// ══════════════════════════════════════════════════════════════
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ── pinMessage — مبني على grupo-pin.js (الطريقة الشغالة فعلاً) ──
@@ -146,9 +131,9 @@ const getBotJid = sock =>
     (jidDecode(sock.user?.id)?.user ||
      sock.user?.id?.split(':')[0]?.split('@')[0] || '') + '@s.whatsapp.net';
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  resolveTarget — يحل LID → phone JID للعمليات على الأعضاء
-// ══════════════════════════════════════════════════════════════
+//
 async function resolveTarget(sock, chatId, m) {
     // 1. من contextInfo (منشن أو رد)
     const ctx = m.message?.extendedTextMessage?.contextInfo;
@@ -170,9 +155,9 @@ async function resolveTarget(sock, chatId, m) {
     return normalizeJid(raw) + '@s.whatsapp.net';
 }
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  file utils
-// ══════════════════════════════════════════════════════════════
+// 
 // ── I/O helpers — async لتجنب إيقاف الـ Event Loop ──
 const readJSON  = async (f, def = {}) => {
     try { return JSON.parse(await fs.promises.readFile(f, 'utf8')); }
@@ -254,11 +239,11 @@ function grpInvalidate(prefix, chatId) {
 // ── cache لـ getPluginInfo — بدل قراءة disk عند كل رسالة ──
 const _pluginInfoCache = new Map(); // key: filePath, value: { mtime, info }
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  إصلاح 1: plugins_config.json — فصل الإعدادات عن الكود
 //  البنية: { "cmdName": { elite, lock, group, prv } }
 //  البوت يقرأ الإعدادات من الملف ويطبقها، لا يعدّل الكود المصدري
-// ══════════════════════════════════════════════════════════════
+// 
 let _pluginsCfg = null;
 
 function loadPluginsCfg() {
@@ -288,7 +273,7 @@ function setPluginCfgField(cmd, key, value) {
 
 
 //  plugin utils
-// ══════════════════════════════════════════════════════════════
+// 
 
 // ── cache لقائمة ملفات الـ plugins (تُعاد البناء بعد loadPlugins) ──
 let _fileListCache = null;
@@ -419,9 +404,9 @@ async function checkPluginSyntax(filePath) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  ☑️ FIX-4: messageCache مُحسَّن — يحفظ النوع + المحتوى لكل رسالة
-// ══════════════════════════════════════════════════════════════
+// 
 const messageCache = new Map();
 const _deleteKey   = Symbol('deleteRegistered');
 const _welcomeKey  = Symbol('welcomeRegistered');
@@ -531,9 +516,9 @@ function registerWelcomeListener(sock) {
 }
 
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  registerBanListener — طرد تلقائي عند محاولة إعادة الانضمام
-// ══════════════════════════════════════════════════════════════
+// 
 function registerBanListener(sock) {
     const ev = sock.ev;
     if (!ev || ev[_banKey]) return;
@@ -561,9 +546,9 @@ function registerBanListener(sock) {
     });
 }
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  protection helpers
-// ══════════════════════════════════════════════════════════════
+// 
 const CRASH_PATTERNS = [
     /[\u202E\u200F\u200E]{10,}/,
     /(.)(\1){300,}/,
@@ -690,9 +675,9 @@ setInterval(() => {
 }, 60_000);
 
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  protectionHandler — المعالج الرئيسي للحماية
-// ══════════════════════════════════════════════════════════════
+// 
 async function protectionHandler(sock, msg) {
     try {
         registerDeleteListener(sock);
@@ -862,9 +847,9 @@ async function protectionHandler(sock, msg) {
 }
 protectionHandler._src = 'protection_system';
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  ☑️ FIX-4: antiDeleteHandler — يعرض النوع + المحتوى + منشن
-// ══════════════════════════════════════════════════════════════
+// 
 async function antiDeleteHandler(sock, keys) {
     try {
         if (readProt().antiDelete !== 'on') return;
@@ -906,9 +891,9 @@ async function antiDeleteHandler(sock, keys) {
 }
 antiDeleteHandler._src = 'antiDelete_system';
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  statsAutoHandler
-// ══════════════════════════════════════════════════════════════
+// 
 async function statsAutoHandler(sock, msg) {
     if (msg._botBanned) return;  // مبند — تجاهل
     try {
@@ -939,7 +924,7 @@ async function statsAutoHandler(sock, msg) {
 }
 statsAutoHandler._src = 'stats_system';
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  slash command handler — /امر مباشر
 //  يعمل في أي وقت داخل جلسة أو خارجها بأولوية عليا
 //
@@ -953,7 +938,7 @@ statsAutoHandler._src = 'stats_system';
 //  /قفل روابط  /قفل صور  /قفل فيديو  /قفل بوتات
 //  /تحميل /تحميل صوت /تحديث /مسح كاش /اذاعة /احصاءات /تغيير اسم
 //  /؟  /مساعدة
-// ══════════════════════════════════════════════════════════════
+// 
 
 const SLASH = '/';
 
@@ -1760,10 +1745,10 @@ async function slashCommandHandler(sock, msg) {
 }
 slashCommandHandler._src = 'slash_system';
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  bannedUsersHandler — middleware: تجاهل المبندين تماماً
 //  يعمل أول شيء قبل أي معالجة أخرى
-// ══════════════════════════════════════════════════════════════
+// 
 async function bannedUsersHandler(sock, msg) {
     if (msg.key.fromMe) return;                          // البوت نفسه ← لا نتجاهله
     const senderJid = msg.key.participant || msg.key.remoteJid;
@@ -1804,13 +1789,13 @@ global.runHandlersParallel = async (sock, msg) => {
     } catch {}
 };
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  تنزيلات — Download Engine
 //  مستوحى من نمط settings.js:
 //  - downloadSessions Map (مثل activeSessions)
 //  - state machine: IDLE / PROCESSING / DONE / ERROR
 //  - قفل per-user + retry backoff + env config
-// ══════════════════════════════════════════════════════════════
+// 
 
 // ── قابل للتغيير من .env أو global._botConfig ────────────────
 const DL_MAX_MB         = parseInt(process.env.DL_MAX_MB  || '150');
@@ -1839,7 +1824,7 @@ async function withRetry(fn, label = '', maxAttempts = DL_MAX_RETRIES) {
 }
 
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  youtube-mp41 (RapidAPI) — تحميل يوتيوب MP4/MP3
 //  الـ endpoint: youtube-mp41.p.rapidapi.com
 //
@@ -1847,7 +1832,7 @@ async function withRetry(fn, label = '', maxAttempts = DL_MAX_RETRIES) {
 //  1) POST /api/v1/download → يرجع { success, title, progressId }
 //  2) GET  /api/v1/progress?id={progressId} → يُستعلم حتى يجهز الرابط
 //     الرد النهائي: { success, msg, download_url }
-// ══════════════════════════════════════════════════════════════
+// 
 const YTMP41_KEY  = '172bbf881fmsh261cc0bdbbbf065p1c32e9jsn68068d5e45a5';
 const YTMP41_HOST = 'youtube-mp41.p.rapidapi.com';
 
@@ -1979,7 +1964,7 @@ const ytmp41 = {
 
 //  ytapi — يوتيوب عبر global.api الخاص
 //  صوت: /dl/youtubeplay  |  فيديو: /dl/ytmp4
-// ══════════════════════════════════════════════════════════════
+// 
 const ytapi = {
     // صوت — يرجع { title, author, duration, views, url, image, dl }
     async audio(query) {
@@ -2010,172 +1995,62 @@ const ytapi = {
 
 
 //  Instagram Downloader — 5 طرق متتالية
-// ══════════════════════════════════════════════════════════════
+// 
 const igDownloader = {
-
-    // ── الطريقة 1: cobalt v10 API ────────────────────────────
-    async cobalt(url) {
-        try {
-            // v10 يقبل Accept: application/json + POST
-            const resp = await fetch('https://api.cobalt.tools/', {
-                method:  'POST',
-                headers: {
-                    'Content-Type':  'application/json',
-                    'Accept':        'application/json',
-                    'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                },
-                body:   JSON.stringify({
-                    url,
-                    videoQuality:    '1080',
-                    audioFormat:     'mp3',
-                    downloadMode:    'auto',
-                    filenameStyle:   'basic',
-                    disableMetadata: true,
-                }),
-                signal: AbortSignal.timeout(25_000),
-            });
-            if (!resp.ok) return null;
-            const json = await resp.json();
-            if ((json.status === 'redirect' || json.status === 'tunnel') && json.url)
-                return { url: json.url, title: 'instagram', ext: 'mp4' };
-            if (json.status === 'picker' && json.picker?.length) {
-                const first = json.picker.find(p => p.type === 'video') || json.picker[0];
-                if (first?.url) return { url: first.url, title: 'instagram', ext: 'mp4', isPhoto: first.type === 'photo' };
-            }
-            return null;
-        } catch { return null; }
-    },
-
-    // ── الطريقة 2: sssinstagram (موثوق لعام 2024) ───────────
-    async sss(url) {
-        try {
-            const resp = await fetch('https://v3.sssinstagram.com/getInfo', {
-                method:  'POST',
-                headers: {
-                    'Content-Type':  'application/json',
-                    'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Origin':        'https://sssinstagram.com',
-                    'Referer':       'https://sssinstagram.com/',
-                },
-                body:   JSON.stringify({ url }),
-                signal: AbortSignal.timeout(20_000),
-            });
-            if (!resp.ok) return null;
-            const json = await resp.json();
-            // يرجع items[] أو url مباشر
-            const items = json?.data?.items || json?.items || [];
-            if (items.length) {
-                const vid = items.find(i => i.url && (i.type === 'video' || i.url.includes('.mp4')))
-                         || items[0];
-                if (vid?.url) return { url: vid.url, title: 'instagram', ext: 'mp4', isPhoto: vid.type === 'photo' };
-            }
-            if (json?.data?.url || json?.url) {
-                const u = json?.data?.url || json?.url;
-                return { url: u, title: 'instagram', ext: 'mp4' };
-            }
-            return null;
-        } catch { return null; }
-    },
-
-    // ── الطريقة 3: snapinsta.app ─────────────────────────────
-    async snapinsta(url) {
-        try {
-            const resp = await fetch('https://snapinsta.app/api', {
-                method:  'POST',
-                headers: {
-                    'Content-Type':   'application/x-www-form-urlencoded',
-                    'User-Agent':     'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                    'Origin':         'https://snapinsta.app',
-                    'Referer':        'https://snapinsta.app/',
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-                body:   new URLSearchParams({ url, lang: 'en' }),
-                signal: AbortSignal.timeout(18_000),
-            });
-            if (!resp.ok) return null;
-            const json = await resp.json();
-            // يرجع { status, data: { url } } أو data[]
-            const link = json?.data?.url || json?.url;
-            if (link && link.includes('.mp4')) return { url: link, title: 'instagram', ext: 'mp4' };
-            // carousel
-            if (Array.isArray(json?.data)) {
-                const vid = json.data.find(i => i.url?.includes('.mp4')) || json.data[0];
-                if (vid?.url) return { url: vid.url, title: 'instagram', ext: 'mp4' };
-            }
-            return null;
-        } catch { return null; }
-    },
-
-    // ── الطريقة 4: RapidAPI instagram-scraper-api2 ───────────
-    async rapid(url) {
+    // ── RapidAPI instagram-scraper-api2 (الوحيد المعتمد) ─────
+    async download(url) {
         const KEY  = '172bbf881fmsh261cc0bdbbbf065p1c32e9jsn68068d5e45a5';
         const HOST = 'instagram-scraper-api2.p.rapidapi.com';
         try {
-            const shortcode = url.match(/(?:reel|p|tv)\/([A-Za-z0-9_-]+)/)?.[1];
-            if (!shortcode) return null;
+            // نمرر الرابط كاملاً — أدق من shortcode فقط
+            const encoded = encodeURIComponent(url);
             const resp = await fetch(
-                `https://${HOST}/v1/post_info?code_or_id_or_url=${shortcode}`,
-                { headers: { 'x-rapidapi-host': HOST, 'x-rapidapi-key': KEY },
-                  signal: AbortSignal.timeout(20_000) }
+                `https://${HOST}/v1/post_info?code_or_id_or_url=${encoded}`,
+                {
+                    headers: {
+                        'x-rapidapi-host': HOST,
+                        'x-rapidapi-key':  KEY,
+                    },
+                    signal: AbortSignal.timeout(25_000),
+                }
             );
-            if (!resp.ok) return null;
-            const data = (await resp.json())?.data || {};
-            if (data.video_url) return { url: data.video_url, title: data.caption_text||'instagram', ext: 'mp4' };
-            const vid = (data.carousel_media||[]).find(i => i.video_url);
-            if (vid?.video_url) return { url: vid.video_url, title: 'instagram', ext: 'mp4' };
-            const img = data.thumbnail_url || data.image_versions2?.candidates?.[0]?.url;
-            if (img) return { url: img, title: 'instagram', ext: 'jpg', isPhoto: true };
+            if (!resp.ok) {
+                console.error(`[Instagram/rapid] HTTP ${resp.status}`);
+                return null;
+            }
+            const json = await resp.json();
+            const data = json?.data || json?.items?.[0] || {};
+
+            // فيديو مباشر
+            if (data.video_url)
+                return { url: data.video_url, title: data.caption_text || 'instagram', ext: 'mp4' };
+
+            // carousel — أول فيديو
+            const carouselVid = (data.carousel_media || []).find(i => i.video_url);
+            if (carouselVid?.video_url)
+                return { url: carouselVid.video_url, title: 'instagram', ext: 'mp4' };
+
+            // صورة
+            const imgUrl = data.thumbnail_url
+                        || data.display_url
+                        || data.image_versions2?.candidates?.[0]?.url;
+            if (imgUrl)
+                return { url: imgUrl, title: 'instagram', ext: 'jpg', isPhoto: true };
+
+            console.error('[Instagram/rapid] لا يوجد رابط:', JSON.stringify(json).slice(0, 200));
             return null;
-        } catch { return null; }
-    },
-
-    // ── الطريقة 5: savefrom fallback ─────────────────────────
-    async savefrom(url) {
-        try {
-            const resp = await fetch('https://worker.sf-tools.com/savefrom?url=' + encodeURIComponent(url), {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                    'Referer':    'https://en.savefrom.net/',
-                    'Origin':     'https://en.savefrom.net',
-                },
-                signal: AbortSignal.timeout(15_000),
-            });
-            if (!resp.ok) return null;
-            const data = await resp.json();
-            const video = (data?.url || [])
-                .filter(u => u.url && (u.ext === 'mp4' || (u.type||'').includes('video')))
-                .sort((a,b) => (parseInt(b.quality)||0) - (parseInt(a.quality)||0))[0];
-            return video?.url ? { url: video.url, title: data.meta?.title||'instagram', ext: 'mp4' } : null;
-        } catch { return null; }
-    },
-
-    // ── تجربة الطرق بالترتيب ────────────────────────────────
-    async download(url) {
-        const methods = [
-            { name: 'cobalt',   fn: () => this.cobalt(url)    },
-            { name: 'sss',      fn: () => this.sss(url)       },
-            { name: 'snapinsta',fn: () => this.snapinsta(url) },
-            { name: 'rapid',    fn: () => this.rapid(url)     },
-            { name: 'savefrom', fn: () => this.savefrom(url)  },
-        ];
-        for (const { name, fn } of methods) {
-            try {
-                const res = await fn();
-                if (res?.url) { console.log(`[Instagram] ✅ ${name}`); return res; }
-            } catch (e) { console.error(`[Instagram] ❌ ${name}:`, e.message); }
+        } catch (e) {
+            console.error('[Instagram/rapid] خطأ:', e.message);
+            return null;
         }
-        return null;
     },
 };
 
-// alias للتوافق مع الكود القديم
-const savefrom = {
-    instagram: (url) => igDownloader.savefrom(url),
-};
+// savefrom alias — محذوف (نستخدم RapidAPI فقط)
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  tikwm API — تيك توك بدون yt-dlp
-// ══════════════════════════════════════════════════════════════
+// 
 const tikwm = {
     async download(url) {
         try {
@@ -2474,9 +2349,9 @@ async function ytdlpDownload(url, opts = {}) {
     };
 }
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  main menu
-// ══════════════════════════════════════════════════════════════
+// 
 const MAIN_MENU =
 `✧━── ❝ 𝐍𝐎𝐕𝐀 𝐒𝐘𝐒𝐓𝐄𝐌 ❞ ──━✧
 
@@ -2505,9 +2380,9 @@ const MAIN_MENU =
 
 // activeSessions معرّفة في بداية الملف قبل setInterval
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  NovaUltra
-// ══════════════════════════════════════════════════════════════
+// 
 const NovaUltra = {
     command:     'نظام',
     description: 'نظام البوت الشامل',
@@ -2517,9 +2392,9 @@ const NovaUltra = {
     lock:        'off',
 };
 
-// ══════════════════════════════════════════════════════════════
+// 
 //  execute
-// ══════════════════════════════════════════════════════════════
+// 
 async function execute({ sock, msg }) {
     const chatId = msg.key.remoteJid;
     const sender = msg.key.participant || chatId;
