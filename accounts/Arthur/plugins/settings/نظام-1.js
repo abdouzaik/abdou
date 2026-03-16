@@ -1,3 +1,14 @@
+// ══════════════════════════════════════════════════════════════
+//  نظام.js — النسخة المصححة النهائية
+//  نخبة | بلاجنز | تنزيلات | إحصاءات | حماية | اوامر | إدارة
+//  + slash handler /امر مباشر
+//
+//  الإصلاحات:
+//  ☑️ antiPrivate  — حظر صحيح بـ JID مُنظَّف + cooldown محكم
+//  ☑️ فيديو >70MB  — يُبعَث مستنداً بدل رفضه
+//  ☑️ antiLink     — يرصد الروابط في النصوص والكابشنات كلها
+//  ☑️ antiDelete   — يعرض النوع + المحتوى + منشن من حذف
+// ══════════════════════════════════════════════════════════════
 import fs            from 'fs-extra';
 import path          from 'path';
 import os            from 'os';
@@ -31,10 +42,11 @@ const BAN_FILE          = path.join(DATA_DIR, 'banned_users.json');
 
 fs.ensureDirSync(DATA_DIR);
 
+// ══════════════════════════════════════════════════════════════
 //  إصلاح 4: مسح مجلدات dl_ المؤقتة عند بدء التشغيل
 //  يضمن عدم تراكم الملفات لو أُغلق البوت أثناء التحميل
-
-(async () => 
+// ══════════════════════════════════════════════════════════════
+(async () => {
     try {
         const tmpDir = os.tmpdir();
         const entries = await fs.promises.readdir(tmpDir);
@@ -46,6 +58,9 @@ fs.ensureDirSync(DATA_DIR);
     } catch {}
 })();
 
+// ══════════════════════════════════════════════════════════════
+//  helpers
+// ══════════════════════════════════════════════════════════════
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ── pinMessage — مبني على grupo-pin.js (الطريقة الشغالة فعلاً) ──
@@ -131,9 +146,9 @@ const getBotJid = sock =>
     (jidDecode(sock.user?.id)?.user ||
      sock.user?.id?.split(':')[0]?.split('@')[0] || '') + '@s.whatsapp.net';
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  resolveTarget — يحل LID → phone JID للعمليات على الأعضاء
-//
+// ══════════════════════════════════════════════════════════════
 async function resolveTarget(sock, chatId, m) {
     // 1. من contextInfo (منشن أو رد)
     const ctx = m.message?.extendedTextMessage?.contextInfo;
@@ -155,9 +170,9 @@ async function resolveTarget(sock, chatId, m) {
     return normalizeJid(raw) + '@s.whatsapp.net';
 }
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  file utils
-// 
+// ══════════════════════════════════════════════════════════════
 // ── I/O helpers — async لتجنب إيقاف الـ Event Loop ──
 const readJSON  = async (f, def = {}) => {
     try { return JSON.parse(await fs.promises.readFile(f, 'utf8')); }
@@ -239,11 +254,11 @@ function grpInvalidate(prefix, chatId) {
 // ── cache لـ getPluginInfo — بدل قراءة disk عند كل رسالة ──
 const _pluginInfoCache = new Map(); // key: filePath, value: { mtime, info }
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  إصلاح 1: plugins_config.json — فصل الإعدادات عن الكود
 //  البنية: { "cmdName": { elite, lock, group, prv } }
 //  البوت يقرأ الإعدادات من الملف ويطبقها، لا يعدّل الكود المصدري
-// 
+// ══════════════════════════════════════════════════════════════
 let _pluginsCfg = null;
 
 function loadPluginsCfg() {
@@ -273,7 +288,7 @@ function setPluginCfgField(cmd, key, value) {
 
 
 //  plugin utils
-// 
+// ══════════════════════════════════════════════════════════════
 
 // ── cache لقائمة ملفات الـ plugins (تُعاد البناء بعد loadPlugins) ──
 let _fileListCache = null;
@@ -404,9 +419,9 @@ async function checkPluginSyntax(filePath) {
     }
 }
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  ☑️ FIX-4: messageCache مُحسَّن — يحفظ النوع + المحتوى لكل رسالة
-// 
+// ══════════════════════════════════════════════════════════════
 const messageCache = new Map();
 const _deleteKey   = Symbol('deleteRegistered');
 const _welcomeKey  = Symbol('welcomeRegistered');
@@ -516,9 +531,9 @@ function registerWelcomeListener(sock) {
 }
 
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  registerBanListener — طرد تلقائي عند محاولة إعادة الانضمام
-// 
+// ══════════════════════════════════════════════════════════════
 function registerBanListener(sock) {
     const ev = sock.ev;
     if (!ev || ev[_banKey]) return;
@@ -546,9 +561,9 @@ function registerBanListener(sock) {
     });
 }
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  protection helpers
-// 
+// ══════════════════════════════════════════════════════════════
 const CRASH_PATTERNS = [
     /[\u202E\u200F\u200E]{10,}/,
     /(.)(\1){300,}/,
@@ -675,9 +690,9 @@ setInterval(() => {
 }, 60_000);
 
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  protectionHandler — المعالج الرئيسي للحماية
-// 
+// ══════════════════════════════════════════════════════════════
 async function protectionHandler(sock, msg) {
     try {
         registerDeleteListener(sock);
@@ -847,9 +862,9 @@ async function protectionHandler(sock, msg) {
 }
 protectionHandler._src = 'protection_system';
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  ☑️ FIX-4: antiDeleteHandler — يعرض النوع + المحتوى + منشن
-// 
+// ══════════════════════════════════════════════════════════════
 async function antiDeleteHandler(sock, keys) {
     try {
         if (readProt().antiDelete !== 'on') return;
@@ -891,9 +906,9 @@ async function antiDeleteHandler(sock, keys) {
 }
 antiDeleteHandler._src = 'antiDelete_system';
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  statsAutoHandler
-// 
+// ══════════════════════════════════════════════════════════════
 async function statsAutoHandler(sock, msg) {
     if (msg._botBanned) return;  // مبند — تجاهل
     try {
@@ -924,7 +939,7 @@ async function statsAutoHandler(sock, msg) {
 }
 statsAutoHandler._src = 'stats_system';
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  slash command handler — /امر مباشر
 //  يعمل في أي وقت داخل جلسة أو خارجها بأولوية عليا
 //
@@ -938,7 +953,7 @@ statsAutoHandler._src = 'stats_system';
 //  /قفل روابط  /قفل صور  /قفل فيديو  /قفل بوتات
 //  /تحميل /تحميل صوت /تحديث /مسح كاش /اذاعة /احصاءات /تغيير اسم
 //  /؟  /مساعدة
-// 
+// ══════════════════════════════════════════════════════════════
 
 const SLASH = '/';
 
@@ -1745,10 +1760,10 @@ async function slashCommandHandler(sock, msg) {
 }
 slashCommandHandler._src = 'slash_system';
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  bannedUsersHandler — middleware: تجاهل المبندين تماماً
 //  يعمل أول شيء قبل أي معالجة أخرى
-// 
+// ══════════════════════════════════════════════════════════════
 async function bannedUsersHandler(sock, msg) {
     if (msg.key.fromMe) return;                          // البوت نفسه ← لا نتجاهله
     const senderJid = msg.key.participant || msg.key.remoteJid;
@@ -1789,13 +1804,13 @@ global.runHandlersParallel = async (sock, msg) => {
     } catch {}
 };
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  تنزيلات — Download Engine
 //  مستوحى من نمط settings.js:
 //  - downloadSessions Map (مثل activeSessions)
 //  - state machine: IDLE / PROCESSING / DONE / ERROR
 //  - قفل per-user + retry backoff + env config
-// 
+// ══════════════════════════════════════════════════════════════
 
 // ── قابل للتغيير من .env أو global._botConfig ────────────────
 const DL_MAX_MB         = parseInt(process.env.DL_MAX_MB  || '150');
@@ -1824,7 +1839,7 @@ async function withRetry(fn, label = '', maxAttempts = DL_MAX_RETRIES) {
 }
 
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  youtube-mp41 (RapidAPI) — تحميل يوتيوب MP4/MP3
 //  الـ endpoint: youtube-mp41.p.rapidapi.com
 //
@@ -1832,7 +1847,7 @@ async function withRetry(fn, label = '', maxAttempts = DL_MAX_RETRIES) {
 //  1) POST /api/v1/download → يرجع { success, title, progressId }
 //  2) GET  /api/v1/progress?id={progressId} → يُستعلم حتى يجهز الرابط
 //     الرد النهائي: { success, msg, download_url }
-// 
+// ══════════════════════════════════════════════════════════════
 const YTMP41_KEY  = '172bbf881fmsh261cc0bdbbbf065p1c32e9jsn68068d5e45a5';
 const YTMP41_HOST = 'youtube-mp41.p.rapidapi.com';
 
@@ -1964,7 +1979,7 @@ const ytmp41 = {
 
 //  ytapi — يوتيوب عبر global.api الخاص
 //  صوت: /dl/youtubeplay  |  فيديو: /dl/ytmp4
-// 
+// ══════════════════════════════════════════════════════════════
 const ytapi = {
     // صوت — يرجع { title, author, duration, views, url, image, dl }
     async audio(query) {
@@ -1995,7 +2010,7 @@ const ytapi = {
 
 
 //  Instagram Downloader — 5 طرق متتالية
-// 
+// ══════════════════════════════════════════════════════════════
 const igDownloader = {
     // ── RapidAPI instagram-scraper-api2 (الوحيد المعتمد) ─────
     async download(url) {
@@ -2048,9 +2063,9 @@ const igDownloader = {
 
 // savefrom alias — محذوف (نستخدم RapidAPI فقط)
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  tikwm API — تيك توك بدون yt-dlp
-// 
+// ══════════════════════════════════════════════════════════════
 const tikwm = {
     async download(url) {
         try {
@@ -2349,9 +2364,9 @@ async function ytdlpDownload(url, opts = {}) {
     };
 }
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  main menu
-// 
+// ══════════════════════════════════════════════════════════════
 const MAIN_MENU =
 `✧━── ❝ 𝐍𝐎𝐕𝐀 𝐒𝐘𝐒𝐓𝐄𝐌 ❞ ──━✧
 
@@ -2380,9 +2395,9 @@ const MAIN_MENU =
 
 // activeSessions معرّفة في بداية الملف قبل setInterval
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  NovaUltra
-// 
+// ══════════════════════════════════════════════════════════════
 const NovaUltra = {
     command:     'نظام',
     description: 'نظام البوت الشامل',
@@ -2392,9 +2407,9 @@ const NovaUltra = {
     lock:        'off',
 };
 
-// 
+// ══════════════════════════════════════════════════════════════
 //  execute
-// 
+// ══════════════════════════════════════════════════════════════
 async function execute({ sock, msg }) {
     const chatId = msg.key.remoteJid;
     const sender = msg.key.participant || chatId;
@@ -3599,37 +3614,27 @@ ${lines}
                     }
                 }
 
-                // ── yt-dlp fallback ──
-                try {
-                    const { filePath: ytFp, ext: ytExt, cleanup: ytClean } = await ytdlpDownload(url, { audio: audioOnly });
-                    const ytSize   = fs.statSync(ytFp).size;
-                    const ytBuf    = await fs.promises.readFile(ytFp); ytClean();
-                    const isVid    = ['mp4','mkv','webm','mov','avi'].includes(ytExt);
-                    const isAud    = ['mp3','m4a','ogg','aac','opus'].includes(ytExt);
-                    if (audioOnly || isAud) {
+                // ── yt-dlp: صوت فقط كـ fallback ──
+                if (audioOnly) {
+                    try {
+                        const { filePath: ytFp, cleanup: ytClean } = await ytdlpDownload(url, { audio: true });
+                        const ytBuf = await fs.promises.readFile(ytFp); ytClean();
                         await sock.sendMessage(chatId, {
                             audio: ytBuf, mimetype: 'audio/mpeg', ptt: false,
                             fileName: `${title}.mp3`,
                         }, { quoted: m });
-                    } else if (isVid && ytSize > 70 * 1024 * 1024) {
-                        await sock.sendMessage(chatId, {
-                            document: ytBuf, mimetype: 'video/mp4',
-                            fileName: `${title}.mp4`,
-                            caption:  `📎 ${title} — ${(ytSize/1024/1024).toFixed(1)}MB`,
-                        }, { quoted: m });
-                    } else {
-                        await sock.sendMessage(chatId, {
-                            video: ytBuf, caption: `🎬 *${title}*`,
-                        }, { quoted: m });
+                        reactOk(sock, m);
+                        await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
+                        return;
+                    } catch (e) {
+                        reactFail(sock, m);
+                        await update(`❌ *فشل تحميل الصوت*\n${(e?.message || '').slice(0, 100)}\n\n🔙 *رجوع*`);
+                        return;
                     }
-                    reactOk(sock, m);
-                    await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
-                    return;
-                } catch (e) {
-                    reactFail(sock, m);
-                    await update(`❌ *فشل تحميل يوتيوب*\n${(e?.message || '').slice(0, 100)}\n\n🔙 *رجوع*`);
-                    return;
                 }
+                reactFail(sock, m);
+                await update(`❌ *فشل تحميل يوتيوب*\n_جرب مرة أخرى._\n\n🔙 *رجوع*`);
+                return;
             }
             // ══════════════════════════════════════
             // انستقرام: cobalt → snapsave → savefrom → yt-dlp
@@ -3668,39 +3673,13 @@ ${lines}
                         /* fallthrough to yt-dlp */
                     }
                 }
-                // ── yt-dlp كـ fallback أخير لانستقرام ──
-                try {
-                    const { filePath: igFp, ext: igExt, cleanup: igClean } = await ytdlpDownload(url, { audio: false });
-                    const igSize = fs.statSync(igFp).size;
-                    const igBuf  = await fs.promises.readFile(igFp); igClean();
-                    const isVid  = ['mp4','mov','webm'].includes(igExt);
-                    if (isVid && igSize > 70 * 1024 * 1024) {
-                        await sock.sendMessage(chatId, {
-                            document: igBuf, mimetype: 'video/mp4',
-                            fileName: 'instagram.mp4',
-                            caption:  `📎 انستقرام — ${(igSize/1024/1024).toFixed(1)}MB`,
-                        }, { quoted: m });
-                    } else if (isVid) {
-                        await sock.sendMessage(chatId, {
-                            video: igBuf, caption: `📸 *انستقرام*`,
-                        }, { quoted: m });
-                    } else {
-                        await sock.sendMessage(chatId, {
-                            image: igBuf, caption: `📸 *انستقرام*`,
-                        }, { quoted: m });
-                    }
-                    reactOk(sock, m);
-                    await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
-                    return;
-                } catch {
-                    reactFail(sock, m);
-                    await update(`❌ *فشل تحميل انستقرام*\n⚠️ المحتوى الخاص لا يمكن تنزيله.\n💡 تأكد أن المنشور عام أو جرّب /_تحميل برابط مختلف.\n\n🔙 *رجوع*`);
-                    return;
-                }
+                reactFail(sock, m);
+                await update(`❌ *فشل تحميل انستقرام*\n⚠️ تأكد أن المنشور عام.\n\n🔙 *رجوع*`);
+                return;
             }
 
             // ══════════════════════════════════════
-            // تيك توك: tikwm → yt-dlp
+            // تيك توك: tikwm فقط
             // ══════════════════════════════════════
             if (isTT) {
                 const ttResult = await tikwm.download(url).catch(() => null);
@@ -3722,11 +3701,21 @@ ${lines}
                         reactOk(sock, m);
                         await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
                         return;
-                    } catch { /* fallthrough to yt-dlp */ }
+                    } catch {}
                 }
+                reactFail(sock, m);
+                await update(`❌ *فشل تحميل تيك توك*\n_جرب مرة أخرى._\n\n🔙 *رجوع*`);
+                return;
             }
 
-            // ── yt-dlp: باقي المنصات أو fallback ──
+            // ── yt-dlp: فيسبوك + صوت الانستا/التيك/باقي المنصات ──
+            // (فيديو فقط للفيس، صوت لكل المنصات)
+            const isFB = url.includes('facebook.com') || url.includes('fb.com') || url.includes('fb.watch');
+            if (!isFB && !audioOnly) {
+                reactFail(sock, m);
+                await update(`❌ *الرابط غير مدعوم لتحميل الفيديو.*\n\n🔙 *رجوع*`);
+                return;
+            }
             const { filePath, ext, cleanup } = await ytdlpDownload(url, { audio: audioOnly });
             const fileSize = fs.statSync(filePath).size;
             const isVideo  = ['mp4','mkv','webm','mov','avi'].includes(ext);
