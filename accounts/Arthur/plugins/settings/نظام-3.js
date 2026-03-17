@@ -55,7 +55,7 @@ fs.ensureDirSync(DATA_DIR);
                 .filter(e => e.startsWith('dl_'))
                 .map(e => fs.remove(path.join(tmpDir, e)).catch(() => {}))
         );
-    } catch {}
+    } catch (e) { console.warn(e?.message || e); }
 })();
 
 // ══════════════════════════════════════════════════════════════
@@ -166,7 +166,7 @@ async function resolveTarget(sock, chatId, m) {
         );
         if (found?.id?.endsWith('@s.whatsapp.net')) return found.id;
         if (found?.id) return found.id;
-    } catch {}
+    } catch (e) { console.warn(e?.message || e); }
     return normalizeJid(raw) + '@s.whatsapp.net';
 }
 
@@ -180,11 +180,11 @@ const readJSON  = async (f, def = {}) => {
 };
 const writeJSON = async (f, d) => {
     try { await fs.promises.writeFile(f, JSON.stringify(d, null, 2), 'utf8'); }
-    catch {}
+    catch (e) { console.warn(e?.message || e); }
 };
 // sync فقط حيث يُستدعى خارج async context (مثل setInterval init)
 const readJSONSync  = (f, def = {}) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return def; } };
-const writeJSONSync = (f, d)        => { try { fs.writeFileSync(f, JSON.stringify(d, null, 2), 'utf8'); } catch {} };
+const writeJSONSync = (f, d)        => { try { fs.writeFileSync(f, JSON.stringify(d, null, 2), 'utf8'); } catch (e) { console.warn(e?.message || e); } };
 
 
 // ── protection cache — sync للقراءة الأولى فقط (in-memory بعدها) ──
@@ -380,7 +380,7 @@ async function findPluginByCmd(cmdName) {
                 _cmdSearchCache.set(cmdName, f);
                 return f;
             }
-        } catch {}
+        } catch (e) { console.warn(e?.message || e); }
     }
     return null;
 }
@@ -413,7 +413,7 @@ async function checkPluginSyntax(filePath) {
             try {
                 const src = await fs.promises.readFile(filePath, 'utf8');
                 codeLine = src.split('\n')[line-1]?.trim() || '';
-            } catch {}
+            } catch (e) { console.warn(e?.message || e); }
         }
         return { ok: false, error: errMsg, line, codeLine };
     }
@@ -462,14 +462,14 @@ function cacheMessage(msg) {
         });
         // نبقي آخر 1000 رسالة فقط
         if (messageCache.size > 1000) messageCache.delete(messageCache.keys().next().value);
-    } catch {}
+    } catch (e) { console.warn(e?.message || e); }
 }
 
 function registerDeleteListener(sock) {
     const ev = sock.ev;
     if (!ev || ev[_deleteKey]) return;
     ev[_deleteKey] = true;
-    try { ev.setMaxListeners(Math.max(ev.getMaxListeners(), 30)); } catch {}
+    try { ev.setMaxListeners(Math.max(ev.getMaxListeners(), 30)); } catch (e) { console.warn(e?.message || e); }
     ev.on('messages.delete', ({ keys }) => antiDeleteHandler(sock, keys));
 }
 
@@ -497,7 +497,7 @@ function registerWelcomeListener(sock) {
     const ev = sock.ev;
     if (!ev || ev[_welcomeKey]) return;
     ev[_welcomeKey] = true;
-    try { ev.setMaxListeners(Math.max(ev.getMaxListeners(), 30)); } catch {}
+    try { ev.setMaxListeners(Math.max(ev.getMaxListeners(), 30)); } catch (e) { console.warn(e?.message || e); }
     ev.on('group-participants.update', async ({ id, participants, action }) => {
         if (action !== 'add') return;
         try {
@@ -538,7 +538,7 @@ function registerBanListener(sock) {
     const ev = sock.ev;
     if (!ev || ev[_banKey]) return;
     ev[_banKey] = true;
-    try { ev.setMaxListeners(Math.max(ev.getMaxListeners(), 30)); } catch {}
+    try { ev.setMaxListeners(Math.max(ev.getMaxListeners(), 30)); } catch (e) { console.warn(e?.message || e); }
     ev.on('group-participants.update', async ({ id, participants, action }) => {
         if (action !== 'add') return;
         try {
@@ -677,7 +677,7 @@ setInterval(() => {
     // تنظيف activeSessions — حذف جلسات أكثر من 5 دقائق بدون نشاط
     for (const [id, s] of activeSessions) {
         if (s.lastActivity && now - s.lastActivity > 300_000) {
-            try { s.cleanupFn?.(); } catch {}
+            try { s.cleanupFn?.(); } catch (e) { console.warn(e?.message || e); }
             activeSessions.delete(id);
         }
     }
@@ -685,7 +685,7 @@ setInterval(() => {
     if (activeSessions.size > 100) {
         // احذف أقدم جلسة
         const oldest = [...activeSessions.entries()].sort((a,b) => (a[1].lastActivity||0) - (b[1].lastActivity||0))[0];
-        if (oldest) { try { oldest[1].cleanupFn?.(); } catch {} activeSessions.delete(oldest[0]); }
+        if (oldest) { try { oldest[1].cleanupFn?.(); } catch (e) { console.warn(e?.message || e); } activeSessions.delete(oldest[0]); }
     }
 }, 60_000);
 
@@ -708,8 +708,7 @@ async function protectionHandler(sock, msg) {
         if (msg.message?.protocolMessage?.type === 0) {
             const deletedKey = msg.message.protocolMessage.key;
             if (deletedKey && prot.antiDelete === 'on' && !msg.key.fromMe) {
-                await antiDeleteHandler(sock, [deletedKey]);
-            }
+                }
             return;
         }
 
@@ -735,7 +734,7 @@ async function protectionHandler(sock, msg) {
             try {
                 await sock.sendMessage(chatId, { text: warnText }, { quoted: msg });
                 await sleep(2000); // ← 2 ثانية لضمان وصول الرسالة قبل الحظر
-            } catch {}
+            } catch (e) { console.warn(e?.message || e); }
 
             // حظر مع fallback (مضاد-الخاص.js يجرب 'block' ثم true)
             try { await sock.updateBlockStatus(chatId, 'block'); }
@@ -752,7 +751,7 @@ async function protectionHandler(sock, msg) {
                         text: `🔒 *مضاد الخاص*\nتم حظر شخص\nالرقم: wa.me/${senderNum}`,
                     });
                 }
-            } catch {}
+            } catch (e) { console.warn(e?.message || e); }
             return;
         }
 
@@ -760,7 +759,7 @@ async function protectionHandler(sock, msg) {
         if (prot.antiCrash === 'on' && isGroup) {
             for (const p of CRASH_PATTERNS) {
                 if (p.test(text)) {
-                    try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
+                    try { await sock.sendMessage(chatId, { delete: msg.key }); } catch (e) { console.warn(e?.message || e); }
                     return;
                 }
             }
@@ -792,7 +791,7 @@ async function protectionHandler(sock, msg) {
                             text: `⛔ @${normalizeJid(senderRaw)} تم طرده بسبب نشر الروابط (3/3)`,
                             mentions: [senderRaw],
                         });
-                        try { await sock.groupParticipantsUpdate(chatId, [senderRaw], 'remove'); } catch {}
+                        try { await sock.groupParticipantsUpdate(chatId, [senderRaw], 'remove'); } catch (e) { console.warn(e?.message || e); }
                     } else {
                         writeProt(prot);
                         await sock.sendMessage(chatId, {
@@ -808,7 +807,7 @@ async function protectionHandler(sock, msg) {
         // ── antiInsult ──
         if (prot.antiInsult === 'on') {
             if (INSULT_WORDS.some(w => text.includes(w))) {
-                try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
+                try { await sock.sendMessage(chatId, { delete: msg.key }); } catch (e) { console.warn(e?.message || e); }
                 if (isGroup && !msg.key.fromMe) {
                     const senderRaw = msg.key.participant || '';
                     const isAdmin   = await isGroupAdmin(sock, chatId, senderRaw);
@@ -824,7 +823,7 @@ async function protectionHandler(sock, msg) {
                                 text: `⛔ @${normalizeJid(senderRaw)} تم طرده بسبب الشتائم (3/3)`,
                                 mentions: [senderRaw],
                             });
-                            try { await sock.groupParticipantsUpdate(chatId, [senderRaw], 'remove'); } catch {}
+                            try { await sock.groupParticipantsUpdate(chatId, [senderRaw], 'remove'); } catch (e) { console.warn(e?.message || e); }
                         } else {
                             writeProt(prot);
                             await sock.sendMessage(chatId, {
@@ -842,12 +841,12 @@ async function protectionHandler(sock, msg) {
 
         // ── قفل الصور — try delete immediately ──
         if (prot.images === 'on' && isGroup && !msg.key.fromMe && msg.message?.imageMessage) {
-            try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
+            try { await sock.sendMessage(chatId, { delete: msg.key }); } catch (e) { console.warn(e?.message || e); }
         }
 
         // ── قفل الفيديو ──
         if (prot.videos === 'on' && isGroup && !msg.key.fromMe && msg.message?.videoMessage) {
-            try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
+            try { await sock.sendMessage(chatId, { delete: msg.key }); } catch (e) { console.warn(e?.message || e); }
         }
 
         // ── قفل البوتات ──
@@ -855,7 +854,7 @@ async function protectionHandler(sock, msg) {
             const m2 = msg.message;
             const botMsg = m2?.buttonsMessage || m2?.listMessage ||
                            m2?.templateMessage || m2?.interactiveMessage;
-            if (botMsg) { try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {} }
+            if (botMsg) { try { await sock.sendMessage(chatId, { delete: msg.key }); } catch (e) { console.warn(e?.message || e); } }
         }
 
     } catch (e) { console.error('[protectionHandler]', e.message); }
@@ -900,7 +899,7 @@ async function antiDeleteHandler(sock, keys) {
                     text: notice,
                     mentions: [senderMention],
                 });
-            } catch {}
+            } catch (e) { console.warn(e?.message || e); }
         }
     } catch (e) { console.error('[antiDeleteHandler]', e.message); }
 }
@@ -1195,7 +1194,7 @@ async function slashCommandHandler(sock, msg) {
                 await sock.groupParticipantsUpdate(chatId, [target], 'demote');
                 await replyM('🔇 تم كتم @' + normalizeJid(target) + ' لمدة ' + mins + ' دقيقة', [target]);
                 setTimeout(async () => {
-                    try { await sock.groupParticipantsUpdate(chatId, [target], 'promote'); } catch {}
+                    try { await sock.groupParticipantsUpdate(chatId, [target], 'promote'); } catch (e) { console.warn(e?.message || e); }
                 }, mins * 60_000);
             }, '🔇');
             return;
@@ -1487,6 +1486,47 @@ async function slashCommandHandler(sock, msg) {
                 { text: icon + ' *جاري تحميل ' + platform + '...*' }, { quoted: msg });
             const upd = t => sock.sendMessage(chatId, { text: t, edit: stMsg.key }).catch(() => {});
             try {
+                const isYTCmd = url.includes('youtube.com') || url.includes('youtu.be');
+
+                if (isYTCmd) {
+                    // ── يوتيوب: RapidAPI أولاً ← ytapi ثانياً ──
+                    let ytR = null;
+                    try {
+                        ytR = audioMode ? await ytmp41.audio(url) : await ytmp41.video(url);
+                    } catch {}
+                    if (!ytR?.url) {
+                        try {
+                            if (audioMode) {
+                                const r = await ytapi.audio(url);
+                                if (r?.dl || r?.url) ytR = { url: r.dl || r.url, title: r.title || '' };
+                            } else {
+                                const r = await ytapi.video(url);
+                                if (r?.downloadUrl) ytR = { url: r.downloadUrl, title: r.title || '' };
+                            }
+                        } catch {}
+                    }
+                    if (!ytR?.url) { reactFail(sock, msg); return upd('❌ *فشل تحميل يوتيوب* — حاول لاحقاً.'); }
+                    const title = (ytR.title || 'يوتيوب').slice(0, 60);
+                    if (audioMode) {
+                        await sock.sendMessage(chatId, {
+                            audio: { url: ytR.url }, mimetype: 'audio/mpeg', ptt: false, fileName: 'youtube.mp3',
+                        }, { quoted: msg });
+                    } else {
+                        const buf  = await downloadImageBuffer(ytR.url);
+                        const size = buf.length;
+                        if (size > 70 * 1024 * 1024) {
+                            await sock.sendMessage(chatId, {
+                                document: buf, mimetype: 'video/mp4', fileName: 'youtube.mp4',
+                                caption: `📎 ${title} — ${(size/1024/1024).toFixed(1)}MB`,
+                            }, { quoted: msg });
+                        } else {
+                            await sock.sendMessage(chatId, { video: buf, caption: `🎬 *${title}*` }, { quoted: msg });
+                        }
+                    }
+                    reactOk(sock, msg); return upd('☑️ *تم التحميل!*');
+                }
+
+                // ── باقي المنصات: yt-dlp ──────────────────────────────
                 const { filePath, ext, cleanup } = await ytdlpDownload(url, { audio: audioMode });
                 const fileSize = fs.statSync(filePath).size;
                 const isVideo  = ['mp4','mkv','webm','mov','avi'].includes(ext);
@@ -1553,7 +1593,7 @@ async function slashCommandHandler(sock, msg) {
                 const chats = await sock.groupFetchAllParticipating();
                 let sent = 0;
                 for (const gid of Object.keys(chats)) {
-                    try { await sock.sendMessage(gid, { text: rest }); sent++; } catch {}
+                    try { await sock.sendMessage(gid, { text: rest }); sent++; } catch (e) { console.warn(e?.message || e); }
                     await sleep(500);
                 }
                 reactOk(sock, msg);
@@ -1756,7 +1796,7 @@ async function slashCommandHandler(sock, msg) {
             return;
         }
 
-    } catch {}
+    } catch (e) { console.warn(e?.message || e); }
 }
 slashCommandHandler._src = 'slash_system';
 
@@ -1765,14 +1805,20 @@ slashCommandHandler._src = 'slash_system';
 //  يعمل أول شيء قبل أي معالجة أخرى
 // ══════════════════════════════════════════════════════════════
 async function bannedUsersHandler(sock, msg) {
-    if (msg.key.fromMe) return;                          // البوت نفسه ← لا نتجاهله
-    const senderJid = msg.key.participant || msg.key.remoteJid;
-    if (!senderJid) return;
-    if (isBanned(senderJid)) {
-        // لا نرد، لا نعالج — صمت تام
-        // نضع علامة على الـ msg حتى تعرف باقي الـ handlers تتجاهله
-        msg._botBanned = true;
+  try {
+    const sender = msg.key.participant || msg.key.remoteJid;
+
+    if (global.db?.banned?.includes(sender)) {
+      msg._botBanned = true;
+      return true;
     }
+
+    return false;
+  } catch (e) {
+    console.error('[bannedUsersHandler]', e?.message || e);
+    return false;
+  }
+}
 }
 bannedUsersHandler._src = 'ban_middleware';
 
@@ -1789,19 +1835,41 @@ global.featureHandlers.push(bannedUsersHandler, protectionHandler, statsAutoHand
 // bannedUsersHandler يجب أن يأتي أولاً (يوقف الرسالة)
 // antiDeleteHandler و slashCommandHandler لهم أولوية ترتيب
 global.runHandlersParallel = async (sock, msg) => {
+  try {
     try {
-        // 1. banned check أولاً (قد يوقف المعالجة)
-        const stopEarly = await bannedUsersHandler(sock, msg).catch(() => true);
-        if (stopEarly === false) return; // مستخدم محظور
-        // 2. protection + stats بالتوازي (مستقلان)
-        await Promise.all([
-            protectionHandler(sock, msg).catch(() => {}),
-            statsAutoHandler(sock, msg).catch(() => {}),
-        ]);
-        // 3. antiDelete + slash بالترتيب
-        await antiDeleteHandler(sock, msg).catch(() => {});
-        await slashCommandHandler(sock, msg).catch(() => {});
-    } catch {}
+      await bannedUsersHandler(sock, msg);
+    } catch (e) {
+      console.error('[bannedUsersHandler]', e?.message || e);
+    }
+
+    if (msg._botBanned) return;
+
+    await Promise.all([
+      (async () => {
+        try {
+          await protectionHandler(sock, msg);
+        } catch (e) {
+          console.error('[protectionHandler]', e?.message || e);
+        }
+      })(),
+      (async () => {
+        try {
+          await statsAutoHandler(sock, msg);
+        } catch (e) {
+          console.error('[statsAutoHandler]', e?.message || e);
+        }
+      })()
+    ]);
+
+    try {
+      await slashCommandHandler(sock, msg);
+    } catch (e) {
+      console.error('[slashCommandHandler]', e?.message || e);
+    }
+
+  } catch (e) {
+    console.error('[runHandlersParallel]', e?.message || e);
+  }
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -1871,8 +1939,8 @@ async function _ytmp41Poll(progressId, title = '') {
         'x-rapidapi-host': YTMP41_HOST,
         'x-rapidapi-key':  YTMP41_KEY,
     };
-    const MAX_TRIES = 8;             // 8 × 2s = 16s أقصى
-    const INTERVAL  = 2_000;
+    const MAX_TRIES = 20;            // 20 × 3s = 60s أقصى — يكفي لأي فيديو
+    const INTERVAL  = 3_000;
 
     for (let i = 0; i < MAX_TRIES; i++) {
         await sleep(i === 0 ? 800 : INTERVAL);
@@ -2187,7 +2255,7 @@ async function downloadPinterestImage(url) {
         // حوّل pin.it → pinterest.com
         let finalUrl = url;
         if (url.includes('pin.it/')) {
-            try { const r = await fetch(url, { redirect: 'follow' }); finalUrl = r.url || url; } catch {}
+            try { const r = await fetch(url, { redirect: 'follow' }); finalUrl = r.url || url; } catch (e) { console.warn(e?.message || e); }
         }
         const resp = await fetch(finalUrl, { headers: { 'User-Agent': PIN_UA } });
         if (!resp.ok) return null;
@@ -2207,7 +2275,7 @@ let _ytdlpBin = null;
 async function getYtdlpBin() {
     if (_ytdlpBin) return _ytdlpBin;
     for (const bin of ['yt-dlp', 'yt_dlp', 'python3 -m yt_dlp']) {
-        try { await execAsync(`${bin} --version`, { timeout: 5000 }); _ytdlpBin = bin; return bin; } catch {}
+        try { await execAsync(`${bin} --version`, { timeout: 5000 }); _ytdlpBin = bin; return bin; } catch (e) { console.warn(e?.message || e); }
     }
     throw new Error('yt-dlp غير مثبت — شغّل: pip install yt-dlp');
 }
@@ -2275,7 +2343,7 @@ function _resolveCookiePath() {
             try {
                 const stat = fs.statSync(p);
                 if (stat.size > 10) return p;
-            } catch {}
+            } catch (e) { console.warn(e?.message || e); }
         }
     }
     return null; // لا كوكيز — yt-dlp يعمل بدونها
@@ -2316,14 +2384,13 @@ async function ytdlpDownload(url, opts = {}) {
         ...cookieArg,
         ...userAgentArgs,
         '--output', path.join(outDir, 'media.%(ext)s'),
-        '--extractor-args', 'youtube:player_client=web,tv',
     ];
 
     const igArgs = isInstagram(safeUrl)
         ? ['--extractor-args', 'instagram:skip_dash_manifest']
         : [];
 
-    const cleanup = () => { try { fs.removeSync(outDir); } catch {} };
+    const cleanup = () => { try { fs.removeSync(outDir); } catch (e) { console.warn(e?.message || e); } };
 
     // ☑️ دالة تشغيل آمنة بـ spawn بدل execAsync
     const runYtdlp = (extraArgs) => {
@@ -2343,7 +2410,7 @@ async function ytdlpDownload(url, opts = {}) {
             });
             proc.on('error', reject);
             // timeout يدوي
-            const t = setTimeout(() => { try { proc.kill(); } catch {} reject(new Error('timeout')); }, 90_000);
+            const t = setTimeout(() => { try { proc.kill(); } catch (e) { console.warn(e?.message || e); } reject(new Error('timeout')); }, 90_000);
             proc.on('close', () => clearTimeout(t));
         });
     };
@@ -2469,7 +2536,7 @@ async function execute({ sock, msg }) {
 
 انتظر حتى تنتهي ثم أعد المحاولة.`,
             }, { quoted: msg });
-        } catch {}
+        } catch (e) { console.warn(e?.message || e); }
         return;
     }
 
@@ -2521,12 +2588,12 @@ async function execute({ sock, msg }) {
     const resendMenu = async () => {
         try {
             // احذف الرسالة القديمة
-            try { await sock.sendMessage(chatId, { delete: botMsgKey }); } catch {}
+            try { await sock.sendMessage(chatId, { delete: botMsgKey }); } catch (e) { console.warn(e?.message || e); }
             await sleep(300);
             const s = await sock.sendMessage(chatId, { text: lastMenuText });
             botMsgKey = s.key;
             msgCount = 0; // إعادة العد
-        } catch {}
+        } catch (e) { console.warn(e?.message || e); }
     };
 
     async function getAdminPerms() {
@@ -2801,12 +2868,12 @@ async function execute({ sock, msg }) {
                 pushState('PLUGINS_EDIT_MENU', showPluginsEditMenu); await showPluginDetail(fp, cmdName); state = 'PLUGIN_DETAIL'; return;
             }
             if (text === 'طفي الكل') {
-                for (const f of getAllPluginFiles()) { if (f.includes('نظام')) continue; try { updatePluginField(f,'lock','on'); } catch {} }
+                for (const f of getAllPluginFiles()) { if (f.includes('نظام')) continue; try { updatePluginField(f,'lock','on'); } catch (e) { console.warn(e?.message || e); } }
                 await loadPlugins().catch(()=>{});
                 await update('🔒 تم قفل الكل.\n\n🔙 *رجوع*'); return;
             }
             if (text === 'شغل الكل') {
-                for (const f of getAllPluginFiles()) { if (f.includes('نظام')) continue; try { updatePluginField(f,'lock','off'); } catch {} }
+                for (const f of getAllPluginFiles()) { if (f.includes('نظام')) continue; try { updatePluginField(f,'lock','off'); } catch (e) { console.warn(e?.message || e); } }
                 await loadPlugins().catch(()=>{});
                 await update('🔓 تم فتح الكل.\n\n🔙 *رجوع*'); return;
             }
@@ -2823,23 +2890,23 @@ async function execute({ sock, msg }) {
                 return;
             }
             if (text === 'قفل' || text === 'فتح') {
-                try { updatePluginField(fp,'lock',text==='قفل'?'on':'off'); await loadPlugins().catch(()=>{}); } catch {}
+                try { updatePluginField(fp,'lock',text==='قفل'?'on':'off'); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); }
                 await sleep(800); await showPluginDetail(fp, tc); return;
             }
             if (text === 'نخبة' || text === 'عام') {
-                try { updatePluginField(fp,'elite',text==='نخبة'?'on':'off'); await loadPlugins().catch(()=>{}); } catch {}
+                try { updatePluginField(fp,'elite',text==='نخبة'?'on':'off'); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); }
                 await sleep(800); await showPluginDetail(fp, tc); return;
             }
-            if (text === 'مجموعات') { try { updatePluginField(fp,'group','true'); updatePluginField(fp,'prv','false'); await loadPlugins().catch(()=>{}); } catch {} await sleep(800); await showPluginDetail(fp, tc); return; }
-            if (text === 'خاص')     { try { updatePluginField(fp,'prv','true'); updatePluginField(fp,'group','false'); await loadPlugins().catch(()=>{}); } catch {} await sleep(800); await showPluginDetail(fp, tc); return; }
-            if (text === 'للجميع')  { try { updatePluginField(fp,'group','false'); updatePluginField(fp,'prv','false'); await loadPlugins().catch(()=>{}); } catch {} await sleep(800); await showPluginDetail(fp, tc); return; }
+            if (text === 'مجموعات') { try { updatePluginField(fp,'group','true'); updatePluginField(fp,'prv','false'); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); } await sleep(800); await showPluginDetail(fp, tc); return; }
+            if (text === 'خاص')     { try { updatePluginField(fp,'prv','true'); updatePluginField(fp,'group','false'); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); } await sleep(800); await showPluginDetail(fp, tc); return; }
+            if (text === 'للجميع')  { try { updatePluginField(fp,'group','false'); updatePluginField(fp,'prv','false'); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); } await sleep(800); await showPluginDetail(fp, tc); return; }
             if (text === 'تغيير الاسم') { pushState('PLUGIN_DETAIL', () => showPluginDetail(tmp.targetFile, tmp.targetCmd)); await update('✏️ اكتب الاسم الجديد:\n\n🔙 *رجوع*'); state = 'PLUGIN_RENAME'; return; }
             return;
         }
 
         if (state === 'PLUGIN_RENAME') {
             if (text === 'رجوع') { await goBack(); return; }
-            try { updatePluginField(tmp.targetFile,'command',text.trim()); await loadPlugins().catch(()=>{}); } catch {}
+            try { updatePluginField(tmp.targetFile,'command',text.trim()); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); }
             await update(`☑️ ${tmp.targetCmd} ➔ ${text.trim()}`);
             tmp.targetCmd = text.trim(); await sleep(1200); await showPluginDetail(tmp.targetFile, tmp.targetCmd); state = 'PLUGIN_DETAIL'; return;
         }
@@ -2935,7 +3002,7 @@ async function execute({ sock, msg }) {
                             await sock.sendMessage(chatId, { image: batch[j].buf });
                             sent++;
                             await sleep(150);
-                        } catch {}
+                        } catch (e) { console.warn(e?.message || e); }
                     }
                     await sleep(350); // pause between batches
                 }
@@ -3018,7 +3085,7 @@ async function execute({ sock, msg }) {
 
         if (state === 'RENAME_NEW') {
             if (text === 'رجوع') { await goBack(); return; }
-            try { updatePluginField(tmp.targetFile,'command',text.trim()); await loadPlugins().catch(()=>{}); } catch {}
+            try { updatePluginField(tmp.targetFile,'command',text.trim()); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); }
             await update(`☑️ ${tmp.targetCmd} ➔ ${text.trim()}`);
             await sleep(1200); await showCmdTools(); state = 'CMDTOOLS'; return;
         }
@@ -3132,7 +3199,7 @@ _يمكن للمستخدم الآن استخدام البوت_`,
                 await tryAdminAction(async () => {
                     await sock.groupParticipantsUpdate(chatId, [target], 'demote');
                     await sock.sendMessage(chatId, { text: `🔇 تم كتم @${normalizeJid(target)} لمدة ${mins} دقيقة`, mentions: [target] });
-                    setTimeout(async () => { try { await sock.groupParticipantsUpdate(chatId, [target], 'promote'); } catch {} }, mins * 60_000);
+                    setTimeout(async () => { try { await sock.groupParticipantsUpdate(chatId, [target], 'promote'); } catch (e) { console.warn(e?.message || e); } }, mins * 60_000);
                 }, '🔇');
             } else if (action === 'unmute') {
                 await tryAdminAction(() => sock.groupParticipantsUpdate(chatId, [target], 'promote'), '🔊');
@@ -3280,13 +3347,13 @@ _يمكن للمستخدم الآن استخدام البوت_`,
 
         if (state === 'ADMIN_WELCOME_VIEW') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'حذف') { try { fs.removeSync(grpFile('welcome', chatId)); reactOk(sock, m); } catch {} await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
+            if (text === 'حذف') { try { fs.removeSync(grpFile('welcome', chatId)); reactOk(sock, m); } catch (e) { console.warn(e?.message || e); } await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
             return;
         }
 
         if (state === 'ADMIN_RULES_VIEW') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'حذف') { try { fs.removeSync(grpFile('rules', chatId)); reactOk(sock, m); } catch {} await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
+            if (text === 'حذف') { try { fs.removeSync(grpFile('rules', chatId)); reactOk(sock, m); } catch (e) { console.warn(e?.message || e); } await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
             return;
         }
 
@@ -3354,7 +3421,7 @@ _يمكن للمستخدم الآن استخدام البوت_`,
             try {
                 const chats = await sock.groupFetchAllParticipating();
                 let sent = 0;
-                for (const gid of Object.keys(chats)) { try { await sock.sendMessage(gid, { text }); sent++; } catch {} await sleep(500); }
+                for (const gid of Object.keys(chats)) { try { await sock.sendMessage(gid, { text }); sent++; } catch (e) { console.warn(e?.message || e); } await sleep(500); }
                 reactOk(sock, m); await update(`☑️ الإرسال لـ ${sent} مجموعة.`);
             } catch (e) { await update(`❌ ${e?.message}`); }
             await sleep(1000); await showAdminToolsMenu(); state = 'ADMIN_TOOLS'; return;
@@ -3566,45 +3633,71 @@ ${lines}
             const isIG = url.includes('instagram.com') || url.includes('instagr.am');
             const isTT = url.includes('tiktok.com') || url.includes('vt.tiktok') || url.includes('vm.tiktok');
 
-            // ══════════════════════════════════════
-            // يوتيوب: API للمعلومات + Cobalt للتحميل → yt-dlp fallback
-            // (رابط التحميل من API يتطلب Premium → نستعمله للـ thumbnail فقط)
-            // ══════════════════════════════════════
+            // ══════════════════════════════════════════════════════
+            // يوتيوب — RapidAPI (ytmp41) أولاً ← ytapi ثانياً
+            // ══════════════════════════════════════════════════════
             if (isYT) {
-                // ── yt-dlp — التحميل المباشر مع دعم الكوكيز ──────────
+                // ── 1. RapidAPI (ytmp41) ─────────────────────────────
+                let ytResult = null;
                 try {
-                    const { filePath: ytFp, ext: ytExt, cleanup: ytClean } =
-                        await ytdlpDownload(url, { audio: audioOnly });
-                    const ytSize = fs.statSync(ytFp).size;
-                    const ytBuf  = await fs.promises.readFile(ytFp);
-                    ytClean();
-                    const isAud = audioOnly || ['mp3','m4a','ogg','aac','opus'].includes(ytExt);
-                    const isVid = ['mp4','mkv','webm','mov'].includes(ytExt);
+                    ytResult = audioOnly
+                        ? await ytmp41.audio(url)
+                        : await ytmp41.video(url);
+                } catch (e) { console.warn('[ytmp41] خطأ:', e.message); }
 
-                    if (isAud) {
+                // ── 2. fallback: global.api (ytapi) ──────────────────
+                if (!ytResult?.url) {
+                    console.log('[YT] ytmp41 فشل — ينتقل إلى ytapi');
+                    try {
+                        if (audioOnly) {
+                            const r = await ytapi.audio(url);
+                            if (r?.dl || r?.url) ytResult = { url: r.dl || r.url, title: r.title || '' };
+                        } else {
+                            const r = await ytapi.video(url);
+                            if (r?.downloadUrl) ytResult = { url: r.downloadUrl, title: r.title || '' };
+                        }
+                    } catch (e) { console.warn('[ytapi] خطأ:', e.message); }
+                }
+
+                if (!ytResult?.url) {
+                    reactFail(sock, m);
+                    await update(`❌ *فشل تحميل يوتيوب*\nتعذّر الحصول على رابط التحميل، حاول لاحقاً.\n\n🔙 *رجوع*`);
+                    return;
+                }
+
+                // ── إرسال الملف ──────────────────────────────────────
+                try {
+                    const title = (ytResult.title || 'يوتيوب').slice(0, 60);
+                    if (audioOnly) {
                         await sock.sendMessage(chatId, {
-                            audio: ytBuf, mimetype: 'audio/mpeg', ptt: false,
+                            audio:    { url: ytResult.url },
+                            mimetype: 'audio/mpeg',
+                            ptt:      false,
                             fileName: 'youtube.mp3',
                         }, { quoted: m });
-                    } else if (isVid && ytSize > 70 * 1024 * 1024) {
-                        await sock.sendMessage(chatId, {
-                            document: ytBuf, mimetype: 'video/mp4',
-                            fileName: 'youtube.mp4',
-                            caption: `📎 يوتيوب — ${(ytSize/1024/1024).toFixed(1)}MB`,
-                        }, { quoted: m });
                     } else {
-                        await sock.sendMessage(chatId, {
-                            video: ytBuf, caption: `🎬 *يوتيوب*`,
-                        }, { quoted: m });
+                        // حمّل الملف لنتحقق من حجمه قبل الإرسال
+                        const ytBuf  = await downloadImageBuffer(ytResult.url);
+                        const ytSize = ytBuf.length;
+                        if (ytSize > 70 * 1024 * 1024) {
+                            await sock.sendMessage(chatId, {
+                                document: ytBuf, mimetype: 'video/mp4',
+                                fileName: 'youtube.mp4',
+                                caption:  `📎 ${title} — ${(ytSize/1024/1024).toFixed(1)}MB`,
+                            }, { quoted: m });
+                        } else {
+                            await sock.sendMessage(chatId, {
+                                video:   ytBuf,
+                                caption: `🎬 *${title}*`,
+                            }, { quoted: m });
+                        }
                     }
                     reactOk(sock, m);
                     await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
                     return;
                 } catch (e) {
                     reactFail(sock, m);
-                    const errMsg = e?.message || 'فشل التحميل';
-                    const hint   = errMsg.includes('غير مثبت') ? '\n💡 شغّل: pip install -U yt-dlp' : '';
-                    await update(`❌ *فشل تحميل يوتيوب*\n${errMsg.slice(0,120)}${hint}\n\n🔙 *رجوع*`);
+                    await update(`❌ *فشل إرسال الفيديو*\n${(e?.message||'').slice(0,100)}\n\n🔙 *رجوع*`);
                     return;
                 }
             }
@@ -3632,7 +3725,7 @@ ${lines}
                         reactOk(sock, m);
                         await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
                         return;
-                    } catch {}
+                    } catch (e) { console.warn(e?.message || e); }
                 }
                 // ── yt-dlp fallback ──
                 try {
@@ -3780,7 +3873,7 @@ ${lines}
             downloadSessions.delete(chatId);
             // مسح الملفات المؤقتة المسجّلة في session
             for (const f of (session.tempFiles || [])) {
-                try { fs.removeSync(f); } catch {}
+                try { fs.removeSync(f); } catch (e) { console.warn(e?.message || e); }
             }
             console.log(`[dl:done] ${chatId} — state:${session.state} time:${Date.now() - session.requestedAt}ms`);
         }
@@ -3961,14 +4054,14 @@ ${nav}
         try {
             const ePath = path.join(BOT_DIR, '../../handlers/elite-pro.json');
             twiceMap = readJSON(ePath, {}).twice || {};
-        } catch {}
+        } catch (e) { console.warn(e?.message || e); }
 
         let participants = [];
         if (chatId.endsWith('@g.us')) {
             try {
                 const meta = await sock.groupMetadata(chatId);
                 participants = meta.participants || [];
-            } catch {}
+            } catch (e) { console.warn(e?.message || e); }
         }
 
         const resolveJid = (raw) => {
@@ -4307,7 +4400,7 @@ ${list}
             await sock.sendMessage(chatId, {
                 react: { text: '', key: botMsgKey },
             });
-        } catch {}
+        } catch (e) { console.warn(e?.message || e); }
     }, SESSION_MS - REACT_CLEAR_BEFORE);
 
     let timeout = setTimeout(() => {
@@ -4325,7 +4418,7 @@ ${list}
                 await sock.sendMessage(chatId, {
                     react: { text: '', key: botMsgKey },
                 });
-            } catch {}
+            } catch (e) { console.warn(e?.message || e); }
         }, SESSION_MS - REACT_CLEAR_BEFORE);
         timeout = setTimeout(() => {
             clearTimeout(reactClearTimer);
