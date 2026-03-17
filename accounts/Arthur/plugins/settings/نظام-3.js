@@ -2253,6 +2253,37 @@ function getVideoFormats(url) {
     ];
 }
 
+// ══════════════════════════════════════════════════════════════
+//  cookieFilePath — يبحث عن cookies.txt في مسارات متعددة
+//  الأولوية: global._botConfig → BOT_DIR → ROOT_DIR → __dirname
+// ══════════════════════════════════════════════════════════════
+function _resolveCookiePath() {
+    // 1. إذا حُدِّد يدوياً في _botConfig
+    if (global._botConfig?.ytdlpCookies) {
+        const p = global._botConfig.ytdlpCookies;
+        if (fs.existsSync(p)) return p;
+        console.warn('[yt-dlp] ⚠️ ملف الكوكيز المحدد غير موجود:', p);
+        return null;
+    }
+    // 2. بحث تلقائي في المسارات المعروفة
+    const candidates = [
+        path.join(BOT_DIR,    'cookies.txt'),
+        path.join(ROOT_DIR,   'cookies.txt'),
+        path.join(__dirname,  'cookies.txt'),
+        path.join(os.homedir(), 'cookies.txt'),
+    ];
+    for (const p of candidates) {
+        if (fs.existsSync(p)) {
+            // تحقق بسيط: الملف ليس فارغاً
+            try {
+                const stat = fs.statSync(p);
+                if (stat.size > 10) return p;
+            } catch {}
+        }
+    }
+    return null; // لا كوكيز — yt-dlp يعمل بدونها
+}
+
 async function ytdlpDownload(url, opts = {}) {
     // ☑️ تنظيف الـ URL لمنع shell injection
     if (!/^https?:\/\//i.test(url)) throw new Error('رابط غير صالح.');
@@ -2262,22 +2293,29 @@ async function ytdlpDownload(url, opts = {}) {
     const outDir = path.join(os.tmpdir(), `dl_${Date.now()}_${Math.random().toString(36).slice(2)}`);
     fs.ensureDirSync(outDir);
 
-    const cookieArg = global._botConfig?.ytdlpCookies
-        ? ['--cookies', global._botConfig.ytdlpCookies]
-        : [];
+    // ── كوكيز: بحث تلقائي أو من _botConfig ──
+    const cookiePath = _resolveCookiePath();
+    const cookieArg  = cookiePath ? ['--cookies', cookiePath] : [];
+    if (cookiePath) {
+        console.log('[yt-dlp] ✅ يستخدم ملف الكوكيز:', cookiePath);
+    } else if (isYouTube(safeUrl)) {
+        console.warn('[yt-dlp] ⚠️ لا يوجد ملف cookies.txt — قد يظهر خطأ bot detection على يوتيوب');
+    }
 
     const userAgentArgs = isFacebook(safeUrl)
         ? ['--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36']
-        : [];
+        : ['--user-agent', 'Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'];
 
     // ☑️ baseArgs كـ array — لا string concatenation — آمن من injection
     const baseArgs = [
         '--no-playlist',
         '--no-warnings',
-        '--socket-timeout', '12',
-        '--retries', '2',
-        '--fragment-retries', '2',
-        '--concurrent-fragments', '5',
+        '--socket-timeout', '15',
+        '--retries', '3',
+        '--fragment-retries', '3',
+        '--concurrent-fragments', '8',  // ⚡ أقصى سرعة: 8 أجزاء متوازية
+        '--http-chunk-size', '10M',      // ⚡ قطع أكبر = تحميل أسرع
+        '--buffer-size', '16K',          // ⚡ تكبير buffer الشبكة
         ...cookieArg,
         ...userAgentArgs,
         '--output', path.join(outDir, 'media.%(ext)s'),
@@ -2338,6 +2376,12 @@ async function ytdlpDownload(url, opts = {}) {
             const errMsg = lastErr.message || 'فشل الفيديو';
             if (/login.required|This video is private|requires authentication/i.test(errMsg))
                 throw new Error('المحتوى خاص أو يتطلب تسجيل دخول.');
+            if (/Sign in to confirm|not a bot|bot detection|cookies/i.test(errMsg)) {
+                const cookieHint = cookiePath
+                    ? 'ملف الكوكيز موجود لكن قد يكون منتهياً — جدِّده من المتصفح.'
+                    : 'ضع ملف cookies.txt في مجلد البوت الرئيسي وأعد المحاولة.';
+                throw new Error(`🤖 يوتيوب يطلب تسجيل دخول — ${cookieHint}`);
+            }
             if (/429|rate.limit|too many requests/i.test(errMsg))
                 throw new Error('معدل الطلبات مرتفع — حاول لاحقاً.');
             if (/video unavailable|has been removed|not available/i.test(errMsg))
