@@ -2011,161 +2011,86 @@ const ytapi = {
 //  Instagram Downloader — 5 طرق متتالية
 // ══════════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════════
-//  Instagram Scraper — بدون API مدفوع
-//  مصادر متعددة بالترتيب: snapinsta → saveinsta → instasave
-//  scraping بـ axios + regex — مثل tikwm تماماً
+//  Instagram — savefrom + yt-dlp صوت فقط
 // ══════════════════════════════════════════════════════════════
-
-// User-Agents عشوائية لمحاكاة متصفح حقيقي
-const _UA_LIST = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
-    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
-];
-const _randUA = () => _UA_LIST[Math.floor(Math.random() * _UA_LIST.length)];
-
 const igDownloader = {
-
-    // ── المصدر 1: snapinsta.app ─────────────────────────────
-    async _snapinsta(url) {
-        if (!axios) return null;
+    // savefrom: سريع وبدون API مدفوع
+    async download(url) {
         try {
-            const ua = _randUA();
-            // خطوة 1: جلب token من الصفحة الرئيسية
-            const home = await axios.get('https://snapinsta.app/', {
-                headers: { 'User-Agent': ua },
-                timeout: 10_000,
-            });
-            const token = home.data?.match(/name="_token"\s+value="([^"]+)"/)?.[1];
-
-            // خطوة 2: إرسال الرابط
-            const resp = await axios.post('https://snapinsta.app/action.php', {
-                url,
-                lang: 'ar',
-            }, {
+            const encoded = encodeURIComponent(url);
+            const resp = await fetch('https://worker.sf-tools.com/savefrom?url=' + encoded, {
                 headers: {
-                    'Content-Type':  'application/x-www-form-urlencoded',
-                    'User-Agent':    ua,
-                    'Origin':        'https://snapinsta.app',
-                    'Referer':       'https://snapinsta.app/',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    ...(token ? { 'X-CSRF-TOKEN': token } : {}),
+                    'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept':          'application/json, text/javascript, */*; q=0.01',
+                    'Referer':         'https://en.savefrom.net/',
+                    'Origin':          'https://en.savefrom.net',
+                    'Accept-Language': 'en-US,en;q=0.9',
                 },
-                timeout: 15_000,
+                signal: AbortSignal.timeout(12_000),
             });
+            if (!resp.ok) return null;
+            const data = await resp.json();
+            if (!data?.url?.length) return null;
 
-            const html = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+            // أعلى جودة mp4
+            const video = data.url
+                .filter(u => u.url && (u.ext === 'mp4' || (u.type||'').includes('video')))
+                .sort((a, b) => (parseInt(b.quality)||0) - (parseInt(a.quality)||0))[0];
 
-            // استخراج رابط mp4 مباشر
-            const mp4 = html.match(/href="(https?:\/\/[^"]+\.mp4[^"]*)"/i)?.[1]
-                     || html.match(/"(https?:\/\/[^"]+(?:cdninstagram|fbcdn)[^"]+\.mp4[^"]*)"/i)?.[1];
-            if (mp4) return { url: mp4.replace(/&amp;/g, '&'), ext: 'mp4' };
+            if (video?.url) return { url: video.url, ext: 'mp4' };
 
             // صورة
-            const img = html.match(/href="(https?:\/\/[^"]+\.jpg[^"]*)"/i)?.[1];
-            if (img) return { url: img.replace(/&amp;/g, '&'), ext: 'jpg', isPhoto: true };
+            const img = data.url.find(u => u.url && /\.jpe?g|\.png|\.webp/i.test(u.url));
+            if (img?.url) return { url: img.url, ext: 'jpg', isPhoto: true };
 
             return null;
-        } catch { return null; }
-    },
-
-    // ── المصدر 2: ssinstagram.com ──────────────────────────
-    async _ssinstagram(url) {
-        if (!axios) return null;
-        try {
-            const ua = _randUA();
-            const resp = await axios.post('https://ssinstagram.com/api/convert', {
-                url,
-            }, {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'User-Agent':   ua,
-                    'Origin':       'https://ssinstagram.com',
-                    'Referer':      'https://ssinstagram.com/',
-                },
-                timeout: 15_000,
-            });
-            const data = resp.data;
-            // يرجع { links: [{ url, quality }] } أو { url }
-            const links = data?.links || data?.data?.links || [];
-            const vid   = links.find(l => l.url?.includes('.mp4')) || links[0];
-            if (vid?.url) return { url: vid.url, ext: 'mp4' };
-            if (data?.url) return { url: data.url, ext: 'mp4' };
+        } catch (e) {
+            console.error('[Instagram/savefrom]', e.message);
             return null;
-        } catch { return null; }
-    },
-
-    // ── المصدر 3: fastdl.app ───────────────────────────────
-    async _fastdl(url) {
-        if (!axios) return null;
-        try {
-            const ua = _randUA();
-            const resp = await axios.post('https://fastdl.app/api/convert', {
-                url,
-                lang: 'en',
-            }, {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'User-Agent':   ua,
-                    'Origin':       'https://fastdl.app',
-                    'Referer':      `https://fastdl.app/?url=${encodeURIComponent(url)}`,
-                },
-                timeout: 15_000,
-            });
-            const data = resp.data;
-            const medias = data?.medias || data?.data?.medias || [];
-            const vid = medias.find(m => m.url?.includes('.mp4') || m.quality?.includes('HD'))
-                     || medias[0];
-            if (vid?.url) return { url: vid.url, ext: 'mp4' };
-            if (data?.url) return { url: data.url, ext: 'mp4' };
-            return null;
-        } catch { return null; }
-    },
-
-    // ── تجربة المصادر بالترتيب ───────────────────────────────
-    async download(url) {
-        const sources = [
-            { name: 'snapinsta',   fn: () => this._snapinsta(url)   },
-            { name: 'ssinstagram', fn: () => this._ssinstagram(url) },
-            { name: 'fastdl',      fn: () => this._fastdl(url)      },
-        ];
-        for (const { name, fn } of sources) {
-            try {
-                const res = await fn();
-                if (res?.url) {
-                    console.log(`[Instagram] ✅ ${name}`);
-                    return res;
-                }
-            } catch (e) {
-                console.error(`[Instagram] ❌ ${name}: ${e.message}`);
-            }
         }
-        console.error('[Instagram] فشلت جميع المصادر');
-        return null;
     },
 };
 
+
 // ══════════════════════════════════════════════════════════════
-//  tikwm API — تيك توك بدون yt-dlp
+//  tikwm API — تيك توك
 // ══════════════════════════════════════════════════════════════
 const tikwm = {
-    async download(url) {
+    // حل روابط vt.tiktok / vm.tiktok المختصرة → الرابط الكامل
+    async _resolveUrl(url) {
+        if (!url.includes('vt.tiktok') && !url.includes('vm.tiktok') && !url.includes('t.tiktok')) return url;
         try {
-            // نرسل الرابط كاملاً — tikwm يحل الـ shortlinks تلقائياً
+            // axios يتبع الـ redirect تلقائياً
+            if (axios) {
+                const r = await axios.get(url, {
+                    maxRedirects: 5,
+                    timeout: 8_000,
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36' },
+                });
+                return r.request?.res?.responseUrl || r.config?.url || url;
+            }
+        } catch {}
+        return url;
+    },
+
+    // المصدر الأول: tikwm.com
+    async _tikwm(url) {
+        try {
             const resp = await fetch('https://www.tikwm.com/api/', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                     'User-Agent':   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
                     'Cookie':       'current_language=en',
+                    'Referer':      'https://www.tikwm.com/',
                 },
                 body: new URLSearchParams({ url, count: '12', cursor: '0', web: '1', hd: '1' }),
                 signal: AbortSignal.timeout(20_000),
             });
             if (!resp.ok) return null;
             const json = await resp.json();
-            if (json?.code !== 0 || !json?.data) return null;
+            // code 0 = نجاح، -1 = خطأ، نقبل أيضاً غياب code
+            if (json?.code === -1 || !json?.data) return null;
             const d = json.data;
             return {
                 videoHD: d.hdplay || d.play || null,
@@ -2175,6 +2100,57 @@ const tikwm = {
                 author:  d.author?.nickname || d.author?.unique_id || '',
             };
         } catch { return null; }
+    },
+
+    // المصدر الثاني: musicaldown.com (fallback)
+    async _musicaldown(url) {
+        if (!axios) return null;
+        try {
+            const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+            // خطوة 1: جلب token
+            const home = await axios.get('https://musicaldown.com/en', {
+                headers: { 'User-Agent': ua },
+                timeout: 8_000,
+            });
+            const token   = home.data?.match(/id="link"\s[^>]*value="([^"]+)"/)?.[1];
+            const tokenId = home.data?.match(/name="([^"]+)"\s+value="[^"]*"\s+id="(?!link)[^"]+"/)?.[1];
+
+            // خطوة 2: إرسال الرابط
+            const form = new URLSearchParams({ 'link': url });
+            if (tokenId && token) form.set(tokenId, token);
+
+            const resp = await axios.post('https://musicaldown.com/download', form, {
+                headers: {
+                    'Content-Type':  'application/x-www-form-urlencoded',
+                    'User-Agent':    ua,
+                    'Origin':        'https://musicaldown.com',
+                    'Referer':       'https://musicaldown.com/en',
+                    'Cookie':        home.headers['set-cookie']?.join('; ') || '',
+                },
+                timeout: 15_000,
+            });
+
+            const html = resp.data || '';
+            const mp4  = html.match(/href="(https?:\/\/[^"]+\.mp4[^"]*)"/i)?.[1];
+            if (mp4) return { videoHD: mp4, video: mp4, audio: null, title: '', author: '' };
+            return null;
+        } catch { return null; }
+    },
+
+    async download(url) {
+        // حل الرابط المختصر أولاً
+        const resolved = await this._resolveUrl(url);
+
+        // جرّب tikwm
+        const r1 = await this._tikwm(resolved);
+        if (r1?.videoHD || r1?.video) { console.log('[TikTok] ✅ tikwm'); return r1; }
+
+        // fallback: musicaldown
+        const r2 = await this._musicaldown(resolved);
+        if (r2?.videoHD || r2?.video) { console.log('[TikTok] ✅ musicaldown'); return r2; }
+
+        console.error('[TikTok] فشلت جميع المصادر');
+        return null;
     },
 };
 
@@ -3725,42 +3701,53 @@ ${lines}
             // انستقرام: cobalt → snapsave → savefrom → yt-dlp
             // ══════════════════════════════════════
             if (isIG && !audioOnly) {
+                // ── savefrom (أسرع: 12 ثانية max) ──
                 const igResult = await igDownloader.download(url);
                 if (igResult?.url) {
                     try {
                         const buf = await downloadImageBuffer(igResult.url);
                         const sz  = buf.length;
-                        // carousel/صورة
                         if (igResult.isPhoto) {
-                            await sock.sendMessage(chatId, {
-                                image:   buf,
-                                caption: `📸 *انستقرام*`,
-                            }, { quoted: m });
+                            await sock.sendMessage(chatId, { image: buf, caption: `📸 *انستقرام*` }, { quoted: m });
                         } else if (sz > 70 * 1024 * 1024) {
-                            // فيديو كبير → مستند
                             await sock.sendMessage(chatId, {
-                                document: buf,
-                                mimetype: 'video/mp4',
+                                document: buf, mimetype: 'video/mp4',
                                 fileName: 'instagram.mp4',
                                 caption:  `📎 انستقرام — ${(sz/1024/1024).toFixed(1)}MB`,
                             }, { quoted: m });
                         } else {
-                            await sock.sendMessage(chatId, {
-                                video:   buf,
-                                caption: `📸 *انستقرام*`,
-                            }, { quoted: m });
+                            await sock.sendMessage(chatId, { video: buf, caption: `📸 *انستقرام*` }, { quoted: m });
                         }
                         reactOk(sock, m);
                         await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
                         return;
-                    } catch (e) {
-                        console.error('[Instagram] فشل الإرسال:', e.message);
-                        /* fallthrough to yt-dlp */
-                    }
+                    } catch {}
                 }
-                reactFail(sock, m);
-                await update(`❌ *فشل تحميل انستقرام*\n⚠️ تأكد أن المنشور عام.\n\n🔙 *رجوع*`);
-                return;
+                // ── yt-dlp fallback ──
+                try {
+                    const { filePath: igFp, ext: igExt, cleanup: igClean } = await ytdlpDownload(url, { audio: false });
+                    const igBuf  = await fs.promises.readFile(igFp); igClean();
+                    const igSize = igBuf.length;
+                    const isVid  = ['mp4','mov','webm'].includes(igExt);
+                    if (isVid && igSize > 70 * 1024 * 1024) {
+                        await sock.sendMessage(chatId, {
+                            document: igBuf, mimetype: 'video/mp4',
+                            fileName: 'instagram.mp4',
+                            caption:  `📎 انستقرام — ${(igSize/1024/1024).toFixed(1)}MB`,
+                        }, { quoted: m });
+                    } else if (isVid) {
+                        await sock.sendMessage(chatId, { video: igBuf, caption: `📸 *انستقرام*` }, { quoted: m });
+                    } else {
+                        await sock.sendMessage(chatId, { image: igBuf, caption: `📸 *انستقرام*` }, { quoted: m });
+                    }
+                    reactOk(sock, m);
+                    await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
+                    return;
+                } catch {
+                    reactFail(sock, m);
+                    await update(`❌ *فشل تحميل انستقرام*\n⚠️ تأكد أن المنشور عام.\n\n🔙 *رجوع*`);
+                    return;
+                }
             }
 
             // ══════════════════════════════════════
