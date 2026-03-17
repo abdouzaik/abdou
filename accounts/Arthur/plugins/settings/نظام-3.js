@@ -2253,10 +2253,7 @@ function getVideoFormats(url) {
     ];
 }
 
-// ══════════════════════════════════════════════════════════════
-//  cookieFilePath — يبحث عن cookies.txt في مسارات متعددة
-//  الأولوية: global._botConfig → BOT_DIR → ROOT_DIR → __dirname
-// ══════════════════════════════════════════════════════════════
+
 function _resolveCookiePath() {
     // 1. إذا حُدِّد يدوياً في _botConfig
     if (global._botConfig?.ytdlpCookies) {
@@ -3573,14 +3570,15 @@ ${lines}
             // (رابط التحميل من API يتطلب Premium → نستعمله للـ thumbnail فقط)
             // ══════════════════════════════════════
             if (isYT) {
-                // ── yt-dlp مباشرة: أسرع وبدون API وسيط ──────────────
+                // ── yt-dlp — التحميل المباشر مع دعم الكوكيز ──────────
                 try {
                     const { filePath: ytFp, ext: ytExt, cleanup: ytClean } =
                         await ytdlpDownload(url, { audio: audioOnly });
                     const ytSize = fs.statSync(ytFp).size;
-                    const ytBuf  = await fs.promises.readFile(ytFp); ytClean();
-                    const isAud  = audioOnly || ['mp3','m4a','ogg','aac','opus'].includes(ytExt);
-                    const isVid  = ['mp4','mkv','webm','mov'].includes(ytExt);
+                    const ytBuf  = await fs.promises.readFile(ytFp);
+                    ytClean();
+                    const isAud = audioOnly || ['mp3','m4a','ogg','aac','opus'].includes(ytExt);
+                    const isVid = ['mp4','mkv','webm','mov'].includes(ytExt);
 
                     if (isAud) {
                         await sock.sendMessage(chatId, {
@@ -3591,7 +3589,7 @@ ${lines}
                         await sock.sendMessage(chatId, {
                             document: ytBuf, mimetype: 'video/mp4',
                             fileName: 'youtube.mp4',
-                            caption:  `📎 يوتيوب — ${(ytSize/1024/1024).toFixed(1)}MB`,
+                            caption: `📎 يوتيوب — ${(ytSize/1024/1024).toFixed(1)}MB`,
                         }, { quoted: m });
                     } else {
                         await sock.sendMessage(chatId, {
@@ -3603,8 +3601,9 @@ ${lines}
                     return;
                 } catch (e) {
                     reactFail(sock, m);
-                    const hint = e?.message?.includes('غير مثبت') ? '\n💡 شغّل: pip install -U yt-dlp' : '';
-                    await update(`❌ *فشل تحميل يوتيوب*\n${(e?.message||'').slice(0,100)}${hint}\n\n🔙 *رجوع*`);
+                    const errMsg = e?.message || 'فشل التحميل';
+                    const hint   = errMsg.includes('غير مثبت') ? '\n💡 شغّل: pip install -U yt-dlp' : '';
+                    await update(`❌ *فشل تحميل يوتيوب*\n${errMsg.slice(0,120)}${hint}\n\n🔙 *رجوع*`);
                     return;
                 }
             }
