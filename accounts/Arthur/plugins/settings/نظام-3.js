@@ -55,7 +55,7 @@ fs.ensureDirSync(DATA_DIR);
                 .filter(e => e.startsWith('dl_'))
                 .map(e => fs.remove(path.join(tmpDir, e)).catch(() => {}))
         );
-    } catch (e) { console.warn(e?.message || e); }
+    } catch {}
 })();
 
 // ══════════════════════════════════════════════════════════════
@@ -166,7 +166,7 @@ async function resolveTarget(sock, chatId, m) {
         );
         if (found?.id?.endsWith('@s.whatsapp.net')) return found.id;
         if (found?.id) return found.id;
-    } catch (e) { console.warn(e?.message || e); }
+    } catch {}
     return normalizeJid(raw) + '@s.whatsapp.net';
 }
 
@@ -180,11 +180,11 @@ const readJSON  = async (f, def = {}) => {
 };
 const writeJSON = async (f, d) => {
     try { await fs.promises.writeFile(f, JSON.stringify(d, null, 2), 'utf8'); }
-    catch (e) { console.warn(e?.message || e); }
+    catch {}
 };
 // sync فقط حيث يُستدعى خارج async context (مثل setInterval init)
 const readJSONSync  = (f, def = {}) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return def; } };
-const writeJSONSync = (f, d)        => { try { fs.writeFileSync(f, JSON.stringify(d, null, 2), 'utf8'); } catch (e) { console.warn(e?.message || e); } };
+const writeJSONSync = (f, d)        => { try { fs.writeFileSync(f, JSON.stringify(d, null, 2), 'utf8'); } catch {} };
 
 
 // ── protection cache — sync للقراءة الأولى فقط (in-memory بعدها) ──
@@ -380,7 +380,7 @@ async function findPluginByCmd(cmdName) {
                 _cmdSearchCache.set(cmdName, f);
                 return f;
             }
-        } catch (e) { console.warn(e?.message || e); }
+        } catch {}
     }
     return null;
 }
@@ -413,7 +413,7 @@ async function checkPluginSyntax(filePath) {
             try {
                 const src = await fs.promises.readFile(filePath, 'utf8');
                 codeLine = src.split('\n')[line-1]?.trim() || '';
-            } catch (e) { console.warn(e?.message || e); }
+            } catch {}
         }
         return { ok: false, error: errMsg, line, codeLine };
     }
@@ -462,14 +462,14 @@ function cacheMessage(msg) {
         });
         // نبقي آخر 1000 رسالة فقط
         if (messageCache.size > 1000) messageCache.delete(messageCache.keys().next().value);
-    } catch (e) { console.warn(e?.message || e); }
+    } catch {}
 }
 
 function registerDeleteListener(sock) {
     const ev = sock.ev;
     if (!ev || ev[_deleteKey]) return;
     ev[_deleteKey] = true;
-    try { ev.setMaxListeners(Math.max(ev.getMaxListeners(), 30)); } catch (e) { console.warn(e?.message || e); }
+    try { ev.setMaxListeners(Math.max(ev.getMaxListeners(), 30)); } catch {}
     ev.on('messages.delete', ({ keys }) => antiDeleteHandler(sock, keys));
 }
 
@@ -497,7 +497,7 @@ function registerWelcomeListener(sock) {
     const ev = sock.ev;
     if (!ev || ev[_welcomeKey]) return;
     ev[_welcomeKey] = true;
-    try { ev.setMaxListeners(Math.max(ev.getMaxListeners(), 30)); } catch (e) { console.warn(e?.message || e); }
+    try { ev.setMaxListeners(Math.max(ev.getMaxListeners(), 30)); } catch {}
     ev.on('group-participants.update', async ({ id, participants, action }) => {
         if (action !== 'add') return;
         try {
@@ -538,7 +538,7 @@ function registerBanListener(sock) {
     const ev = sock.ev;
     if (!ev || ev[_banKey]) return;
     ev[_banKey] = true;
-    try { ev.setMaxListeners(Math.max(ev.getMaxListeners(), 30)); } catch (e) { console.warn(e?.message || e); }
+    try { ev.setMaxListeners(Math.max(ev.getMaxListeners(), 30)); } catch {}
     ev.on('group-participants.update', async ({ id, participants, action }) => {
         if (action !== 'add') return;
         try {
@@ -677,7 +677,7 @@ setInterval(() => {
     // تنظيف activeSessions — حذف جلسات أكثر من 5 دقائق بدون نشاط
     for (const [id, s] of activeSessions) {
         if (s.lastActivity && now - s.lastActivity > 300_000) {
-            try { s.cleanupFn?.(); } catch (e) { console.warn(e?.message || e); }
+            try { s.cleanupFn?.(); } catch {}
             activeSessions.delete(id);
         }
     }
@@ -685,7 +685,7 @@ setInterval(() => {
     if (activeSessions.size > 100) {
         // احذف أقدم جلسة
         const oldest = [...activeSessions.entries()].sort((a,b) => (a[1].lastActivity||0) - (b[1].lastActivity||0))[0];
-        if (oldest) { try { oldest[1].cleanupFn?.(); } catch (e) { console.warn(e?.message || e); } activeSessions.delete(oldest[0]); }
+        if (oldest) { try { oldest[1].cleanupFn?.(); } catch {} activeSessions.delete(oldest[0]); }
     }
 }, 60_000);
 
@@ -708,7 +708,8 @@ async function protectionHandler(sock, msg) {
         if (msg.message?.protocolMessage?.type === 0) {
             const deletedKey = msg.message.protocolMessage.key;
             if (deletedKey && prot.antiDelete === 'on' && !msg.key.fromMe) {
-                }
+                await antiDeleteHandler(sock, [deletedKey]);
+            }
             return;
         }
 
@@ -734,7 +735,7 @@ async function protectionHandler(sock, msg) {
             try {
                 await sock.sendMessage(chatId, { text: warnText }, { quoted: msg });
                 await sleep(2000); // ← 2 ثانية لضمان وصول الرسالة قبل الحظر
-            } catch (e) { console.warn(e?.message || e); }
+            } catch {}
 
             // حظر مع fallback (مضاد-الخاص.js يجرب 'block' ثم true)
             try { await sock.updateBlockStatus(chatId, 'block'); }
@@ -751,7 +752,7 @@ async function protectionHandler(sock, msg) {
                         text: `🔒 *مضاد الخاص*\nتم حظر شخص\nالرقم: wa.me/${senderNum}`,
                     });
                 }
-            } catch (e) { console.warn(e?.message || e); }
+            } catch {}
             return;
         }
 
@@ -759,7 +760,7 @@ async function protectionHandler(sock, msg) {
         if (prot.antiCrash === 'on' && isGroup) {
             for (const p of CRASH_PATTERNS) {
                 if (p.test(text)) {
-                    try { await sock.sendMessage(chatId, { delete: msg.key }); } catch (e) { console.warn(e?.message || e); }
+                    try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
                     return;
                 }
             }
@@ -791,7 +792,7 @@ async function protectionHandler(sock, msg) {
                             text: `⛔ @${normalizeJid(senderRaw)} تم طرده بسبب نشر الروابط (3/3)`,
                             mentions: [senderRaw],
                         });
-                        try { await sock.groupParticipantsUpdate(chatId, [senderRaw], 'remove'); } catch (e) { console.warn(e?.message || e); }
+                        try { await sock.groupParticipantsUpdate(chatId, [senderRaw], 'remove'); } catch {}
                     } else {
                         writeProt(prot);
                         await sock.sendMessage(chatId, {
@@ -807,7 +808,7 @@ async function protectionHandler(sock, msg) {
         // ── antiInsult ──
         if (prot.antiInsult === 'on') {
             if (INSULT_WORDS.some(w => text.includes(w))) {
-                try { await sock.sendMessage(chatId, { delete: msg.key }); } catch (e) { console.warn(e?.message || e); }
+                try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
                 if (isGroup && !msg.key.fromMe) {
                     const senderRaw = msg.key.participant || '';
                     const isAdmin   = await isGroupAdmin(sock, chatId, senderRaw);
@@ -823,7 +824,7 @@ async function protectionHandler(sock, msg) {
                                 text: `⛔ @${normalizeJid(senderRaw)} تم طرده بسبب الشتائم (3/3)`,
                                 mentions: [senderRaw],
                             });
-                            try { await sock.groupParticipantsUpdate(chatId, [senderRaw], 'remove'); } catch (e) { console.warn(e?.message || e); }
+                            try { await sock.groupParticipantsUpdate(chatId, [senderRaw], 'remove'); } catch {}
                         } else {
                             writeProt(prot);
                             await sock.sendMessage(chatId, {
@@ -841,12 +842,12 @@ async function protectionHandler(sock, msg) {
 
         // ── قفل الصور — try delete immediately ──
         if (prot.images === 'on' && isGroup && !msg.key.fromMe && msg.message?.imageMessage) {
-            try { await sock.sendMessage(chatId, { delete: msg.key }); } catch (e) { console.warn(e?.message || e); }
+            try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
         }
 
         // ── قفل الفيديو ──
         if (prot.videos === 'on' && isGroup && !msg.key.fromMe && msg.message?.videoMessage) {
-            try { await sock.sendMessage(chatId, { delete: msg.key }); } catch (e) { console.warn(e?.message || e); }
+            try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {}
         }
 
         // ── قفل البوتات ──
@@ -854,7 +855,7 @@ async function protectionHandler(sock, msg) {
             const m2 = msg.message;
             const botMsg = m2?.buttonsMessage || m2?.listMessage ||
                            m2?.templateMessage || m2?.interactiveMessage;
-            if (botMsg) { try { await sock.sendMessage(chatId, { delete: msg.key }); } catch (e) { console.warn(e?.message || e); } }
+            if (botMsg) { try { await sock.sendMessage(chatId, { delete: msg.key }); } catch {} }
         }
 
     } catch (e) { console.error('[protectionHandler]', e.message); }
@@ -899,7 +900,7 @@ async function antiDeleteHandler(sock, keys) {
                     text: notice,
                     mentions: [senderMention],
                 });
-            } catch (e) { console.warn(e?.message || e); }
+            } catch {}
         }
     } catch (e) { console.error('[antiDeleteHandler]', e.message); }
 }
@@ -1194,7 +1195,7 @@ async function slashCommandHandler(sock, msg) {
                 await sock.groupParticipantsUpdate(chatId, [target], 'demote');
                 await replyM('🔇 تم كتم @' + normalizeJid(target) + ' لمدة ' + mins + ' دقيقة', [target]);
                 setTimeout(async () => {
-                    try { await sock.groupParticipantsUpdate(chatId, [target], 'promote'); } catch (e) { console.warn(e?.message || e); }
+                    try { await sock.groupParticipantsUpdate(chatId, [target], 'promote'); } catch {}
                 }, mins * 60_000);
             }, '🔇');
             return;
@@ -1552,7 +1553,7 @@ async function slashCommandHandler(sock, msg) {
                 const chats = await sock.groupFetchAllParticipating();
                 let sent = 0;
                 for (const gid of Object.keys(chats)) {
-                    try { await sock.sendMessage(gid, { text: rest }); sent++; } catch (e) { console.warn(e?.message || e); }
+                    try { await sock.sendMessage(gid, { text: rest }); sent++; } catch {}
                     await sleep(500);
                 }
                 reactOk(sock, msg);
@@ -1755,7 +1756,7 @@ async function slashCommandHandler(sock, msg) {
             return;
         }
 
-    } catch (e) { console.warn(e?.message || e); }
+    } catch {}
 }
 slashCommandHandler._src = 'slash_system';
 
@@ -1764,20 +1765,14 @@ slashCommandHandler._src = 'slash_system';
 //  يعمل أول شيء قبل أي معالجة أخرى
 // ══════════════════════════════════════════════════════════════
 async function bannedUsersHandler(sock, msg) {
-  try {
-    const sender = msg.key.participant || msg.key.remoteJid;
-
-    if (global.db?.banned?.includes(sender)) {
-      msg._botBanned = true;
-      return true;
+    if (msg.key.fromMe) return;                          // البوت نفسه ← لا نتجاهله
+    const senderJid = msg.key.participant || msg.key.remoteJid;
+    if (!senderJid) return;
+    if (isBanned(senderJid)) {
+        // لا نرد، لا نعالج — صمت تام
+        // نضع علامة على الـ msg حتى تعرف باقي الـ handlers تتجاهله
+        msg._botBanned = true;
     }
-
-    return false;
-  } catch (e) {
-    console.error('[bannedUsersHandler]', e?.message || e);
-    return false;
-  }
-}
 }
 bannedUsersHandler._src = 'ban_middleware';
 
@@ -1794,41 +1789,19 @@ global.featureHandlers.push(bannedUsersHandler, protectionHandler, statsAutoHand
 // bannedUsersHandler يجب أن يأتي أولاً (يوقف الرسالة)
 // antiDeleteHandler و slashCommandHandler لهم أولوية ترتيب
 global.runHandlersParallel = async (sock, msg) => {
-  try {
     try {
-      await bannedUsersHandler(sock, msg);
-    } catch (e) {
-      console.error('[bannedUsersHandler]', e?.message || e);
-    }
-
-    if (msg._botBanned) return;
-
-    await Promise.all([
-      (async () => {
-        try {
-          await protectionHandler(sock, msg);
-        } catch (e) {
-          console.error('[protectionHandler]', e?.message || e);
-        }
-      })(),
-      (async () => {
-        try {
-          await statsAutoHandler(sock, msg);
-        } catch (e) {
-          console.error('[statsAutoHandler]', e?.message || e);
-        }
-      })()
-    ]);
-
-    try {
-      await slashCommandHandler(sock, msg);
-    } catch (e) {
-      console.error('[slashCommandHandler]', e?.message || e);
-    }
-
-  } catch (e) {
-    console.error('[runHandlersParallel]', e?.message || e);
-  }
+        // 1. banned check أولاً (قد يوقف المعالجة)
+        const stopEarly = await bannedUsersHandler(sock, msg).catch(() => true);
+        if (stopEarly === false) return; // مستخدم محظور
+        // 2. protection + stats بالتوازي (مستقلان)
+        await Promise.all([
+            protectionHandler(sock, msg).catch(() => {}),
+            statsAutoHandler(sock, msg).catch(() => {}),
+        ]);
+        // 3. antiDelete + slash بالترتيب
+        await antiDeleteHandler(sock, msg).catch(() => {});
+        await slashCommandHandler(sock, msg).catch(() => {});
+    } catch {}
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -2214,7 +2187,7 @@ async function downloadPinterestImage(url) {
         // حوّل pin.it → pinterest.com
         let finalUrl = url;
         if (url.includes('pin.it/')) {
-            try { const r = await fetch(url, { redirect: 'follow' }); finalUrl = r.url || url; } catch (e) { console.warn(e?.message || e); }
+            try { const r = await fetch(url, { redirect: 'follow' }); finalUrl = r.url || url; } catch {}
         }
         const resp = await fetch(finalUrl, { headers: { 'User-Agent': PIN_UA } });
         if (!resp.ok) return null;
@@ -2234,7 +2207,7 @@ let _ytdlpBin = null;
 async function getYtdlpBin() {
     if (_ytdlpBin) return _ytdlpBin;
     for (const bin of ['yt-dlp', 'yt_dlp', 'python3 -m yt_dlp']) {
-        try { await execAsync(`${bin} --version`, { timeout: 5000 }); _ytdlpBin = bin; return bin; } catch (e) { console.warn(e?.message || e); }
+        try { await execAsync(`${bin} --version`, { timeout: 5000 }); _ytdlpBin = bin; return bin; } catch {}
     }
     throw new Error('yt-dlp غير مثبت — شغّل: pip install yt-dlp');
 }
@@ -2302,7 +2275,7 @@ function _resolveCookiePath() {
             try {
                 const stat = fs.statSync(p);
                 if (stat.size > 10) return p;
-            } catch (e) { console.warn(e?.message || e); }
+            } catch {}
         }
     }
     return null; // لا كوكيز — yt-dlp يعمل بدونها
@@ -2350,7 +2323,7 @@ async function ytdlpDownload(url, opts = {}) {
         ? ['--extractor-args', 'instagram:skip_dash_manifest']
         : [];
 
-    const cleanup = () => { try { fs.removeSync(outDir); } catch (e) { console.warn(e?.message || e); } };
+    const cleanup = () => { try { fs.removeSync(outDir); } catch {} };
 
     // ☑️ دالة تشغيل آمنة بـ spawn بدل execAsync
     const runYtdlp = (extraArgs) => {
@@ -2370,7 +2343,7 @@ async function ytdlpDownload(url, opts = {}) {
             });
             proc.on('error', reject);
             // timeout يدوي
-            const t = setTimeout(() => { try { proc.kill(); } catch (e) { console.warn(e?.message || e); } reject(new Error('timeout')); }, 90_000);
+            const t = setTimeout(() => { try { proc.kill(); } catch {} reject(new Error('timeout')); }, 90_000);
             proc.on('close', () => clearTimeout(t));
         });
     };
@@ -2496,7 +2469,7 @@ async function execute({ sock, msg }) {
 
 انتظر حتى تنتهي ثم أعد المحاولة.`,
             }, { quoted: msg });
-        } catch (e) { console.warn(e?.message || e); }
+        } catch {}
         return;
     }
 
@@ -2548,12 +2521,12 @@ async function execute({ sock, msg }) {
     const resendMenu = async () => {
         try {
             // احذف الرسالة القديمة
-            try { await sock.sendMessage(chatId, { delete: botMsgKey }); } catch (e) { console.warn(e?.message || e); }
+            try { await sock.sendMessage(chatId, { delete: botMsgKey }); } catch {}
             await sleep(300);
             const s = await sock.sendMessage(chatId, { text: lastMenuText });
             botMsgKey = s.key;
             msgCount = 0; // إعادة العد
-        } catch (e) { console.warn(e?.message || e); }
+        } catch {}
     };
 
     async function getAdminPerms() {
@@ -2828,12 +2801,12 @@ async function execute({ sock, msg }) {
                 pushState('PLUGINS_EDIT_MENU', showPluginsEditMenu); await showPluginDetail(fp, cmdName); state = 'PLUGIN_DETAIL'; return;
             }
             if (text === 'طفي الكل') {
-                for (const f of getAllPluginFiles()) { if (f.includes('نظام')) continue; try { updatePluginField(f,'lock','on'); } catch (e) { console.warn(e?.message || e); } }
+                for (const f of getAllPluginFiles()) { if (f.includes('نظام')) continue; try { updatePluginField(f,'lock','on'); } catch {} }
                 await loadPlugins().catch(()=>{});
                 await update('🔒 تم قفل الكل.\n\n🔙 *رجوع*'); return;
             }
             if (text === 'شغل الكل') {
-                for (const f of getAllPluginFiles()) { if (f.includes('نظام')) continue; try { updatePluginField(f,'lock','off'); } catch (e) { console.warn(e?.message || e); } }
+                for (const f of getAllPluginFiles()) { if (f.includes('نظام')) continue; try { updatePluginField(f,'lock','off'); } catch {} }
                 await loadPlugins().catch(()=>{});
                 await update('🔓 تم فتح الكل.\n\n🔙 *رجوع*'); return;
             }
@@ -2850,23 +2823,23 @@ async function execute({ sock, msg }) {
                 return;
             }
             if (text === 'قفل' || text === 'فتح') {
-                try { updatePluginField(fp,'lock',text==='قفل'?'on':'off'); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); }
+                try { updatePluginField(fp,'lock',text==='قفل'?'on':'off'); await loadPlugins().catch(()=>{}); } catch {}
                 await sleep(800); await showPluginDetail(fp, tc); return;
             }
             if (text === 'نخبة' || text === 'عام') {
-                try { updatePluginField(fp,'elite',text==='نخبة'?'on':'off'); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); }
+                try { updatePluginField(fp,'elite',text==='نخبة'?'on':'off'); await loadPlugins().catch(()=>{}); } catch {}
                 await sleep(800); await showPluginDetail(fp, tc); return;
             }
-            if (text === 'مجموعات') { try { updatePluginField(fp,'group','true'); updatePluginField(fp,'prv','false'); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); } await sleep(800); await showPluginDetail(fp, tc); return; }
-            if (text === 'خاص')     { try { updatePluginField(fp,'prv','true'); updatePluginField(fp,'group','false'); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); } await sleep(800); await showPluginDetail(fp, tc); return; }
-            if (text === 'للجميع')  { try { updatePluginField(fp,'group','false'); updatePluginField(fp,'prv','false'); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); } await sleep(800); await showPluginDetail(fp, tc); return; }
+            if (text === 'مجموعات') { try { updatePluginField(fp,'group','true'); updatePluginField(fp,'prv','false'); await loadPlugins().catch(()=>{}); } catch {} await sleep(800); await showPluginDetail(fp, tc); return; }
+            if (text === 'خاص')     { try { updatePluginField(fp,'prv','true'); updatePluginField(fp,'group','false'); await loadPlugins().catch(()=>{}); } catch {} await sleep(800); await showPluginDetail(fp, tc); return; }
+            if (text === 'للجميع')  { try { updatePluginField(fp,'group','false'); updatePluginField(fp,'prv','false'); await loadPlugins().catch(()=>{}); } catch {} await sleep(800); await showPluginDetail(fp, tc); return; }
             if (text === 'تغيير الاسم') { pushState('PLUGIN_DETAIL', () => showPluginDetail(tmp.targetFile, tmp.targetCmd)); await update('✏️ اكتب الاسم الجديد:\n\n🔙 *رجوع*'); state = 'PLUGIN_RENAME'; return; }
             return;
         }
 
         if (state === 'PLUGIN_RENAME') {
             if (text === 'رجوع') { await goBack(); return; }
-            try { updatePluginField(tmp.targetFile,'command',text.trim()); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); }
+            try { updatePluginField(tmp.targetFile,'command',text.trim()); await loadPlugins().catch(()=>{}); } catch {}
             await update(`☑️ ${tmp.targetCmd} ➔ ${text.trim()}`);
             tmp.targetCmd = text.trim(); await sleep(1200); await showPluginDetail(tmp.targetFile, tmp.targetCmd); state = 'PLUGIN_DETAIL'; return;
         }
@@ -2962,7 +2935,7 @@ async function execute({ sock, msg }) {
                             await sock.sendMessage(chatId, { image: batch[j].buf });
                             sent++;
                             await sleep(150);
-                        } catch (e) { console.warn(e?.message || e); }
+                        } catch {}
                     }
                     await sleep(350); // pause between batches
                 }
@@ -3045,7 +3018,7 @@ async function execute({ sock, msg }) {
 
         if (state === 'RENAME_NEW') {
             if (text === 'رجوع') { await goBack(); return; }
-            try { updatePluginField(tmp.targetFile,'command',text.trim()); await loadPlugins().catch(()=>{}); } catch (e) { console.warn(e?.message || e); }
+            try { updatePluginField(tmp.targetFile,'command',text.trim()); await loadPlugins().catch(()=>{}); } catch {}
             await update(`☑️ ${tmp.targetCmd} ➔ ${text.trim()}`);
             await sleep(1200); await showCmdTools(); state = 'CMDTOOLS'; return;
         }
@@ -3159,7 +3132,7 @@ _يمكن للمستخدم الآن استخدام البوت_`,
                 await tryAdminAction(async () => {
                     await sock.groupParticipantsUpdate(chatId, [target], 'demote');
                     await sock.sendMessage(chatId, { text: `🔇 تم كتم @${normalizeJid(target)} لمدة ${mins} دقيقة`, mentions: [target] });
-                    setTimeout(async () => { try { await sock.groupParticipantsUpdate(chatId, [target], 'promote'); } catch (e) { console.warn(e?.message || e); } }, mins * 60_000);
+                    setTimeout(async () => { try { await sock.groupParticipantsUpdate(chatId, [target], 'promote'); } catch {} }, mins * 60_000);
                 }, '🔇');
             } else if (action === 'unmute') {
                 await tryAdminAction(() => sock.groupParticipantsUpdate(chatId, [target], 'promote'), '🔊');
@@ -3307,13 +3280,13 @@ _يمكن للمستخدم الآن استخدام البوت_`,
 
         if (state === 'ADMIN_WELCOME_VIEW') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'حذف') { try { fs.removeSync(grpFile('welcome', chatId)); reactOk(sock, m); } catch (e) { console.warn(e?.message || e); } await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
+            if (text === 'حذف') { try { fs.removeSync(grpFile('welcome', chatId)); reactOk(sock, m); } catch {} await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
             return;
         }
 
         if (state === 'ADMIN_RULES_VIEW') {
             if (text === 'رجوع') { await goBack(); return; }
-            if (text === 'حذف') { try { fs.removeSync(grpFile('rules', chatId)); reactOk(sock, m); } catch (e) { console.warn(e?.message || e); } await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
+            if (text === 'حذف') { try { fs.removeSync(grpFile('rules', chatId)); reactOk(sock, m); } catch {} await sleep(400); await showAdminContentMenu(); state = 'ADMIN_CONTENT'; }
             return;
         }
 
@@ -3381,7 +3354,7 @@ _يمكن للمستخدم الآن استخدام البوت_`,
             try {
                 const chats = await sock.groupFetchAllParticipating();
                 let sent = 0;
-                for (const gid of Object.keys(chats)) { try { await sock.sendMessage(gid, { text }); sent++; } catch (e) { console.warn(e?.message || e); } await sleep(500); }
+                for (const gid of Object.keys(chats)) { try { await sock.sendMessage(gid, { text }); sent++; } catch {} await sleep(500); }
                 reactOk(sock, m); await update(`☑️ الإرسال لـ ${sent} مجموعة.`);
             } catch (e) { await update(`❌ ${e?.message}`); }
             await sleep(1000); await showAdminToolsMenu(); state = 'ADMIN_TOOLS'; return;
@@ -3659,7 +3632,7 @@ ${lines}
                         reactOk(sock, m);
                         await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
                         return;
-                    } catch (e) { console.warn(e?.message || e); }
+                    } catch {}
                 }
                 // ── yt-dlp fallback ──
                 try {
@@ -3807,7 +3780,7 @@ ${lines}
             downloadSessions.delete(chatId);
             // مسح الملفات المؤقتة المسجّلة في session
             for (const f of (session.tempFiles || [])) {
-                try { fs.removeSync(f); } catch (e) { console.warn(e?.message || e); }
+                try { fs.removeSync(f); } catch {}
             }
             console.log(`[dl:done] ${chatId} — state:${session.state} time:${Date.now() - session.requestedAt}ms`);
         }
@@ -3988,14 +3961,14 @@ ${nav}
         try {
             const ePath = path.join(BOT_DIR, '../../handlers/elite-pro.json');
             twiceMap = readJSON(ePath, {}).twice || {};
-        } catch (e) { console.warn(e?.message || e); }
+        } catch {}
 
         let participants = [];
         if (chatId.endsWith('@g.us')) {
             try {
                 const meta = await sock.groupMetadata(chatId);
                 participants = meta.participants || [];
-            } catch (e) { console.warn(e?.message || e); }
+            } catch {}
         }
 
         const resolveJid = (raw) => {
@@ -4334,7 +4307,7 @@ ${list}
             await sock.sendMessage(chatId, {
                 react: { text: '', key: botMsgKey },
             });
-        } catch (e) { console.warn(e?.message || e); }
+        } catch {}
     }, SESSION_MS - REACT_CLEAR_BEFORE);
 
     let timeout = setTimeout(() => {
@@ -4352,7 +4325,7 @@ ${list}
                 await sock.sendMessage(chatId, {
                     react: { text: '', key: botMsgKey },
                 });
-            } catch (e) { console.warn(e?.message || e); }
+            } catch {}
         }, SESSION_MS - REACT_CLEAR_BEFORE);
         timeout = setTimeout(() => {
             clearTimeout(reactClearTimer);
