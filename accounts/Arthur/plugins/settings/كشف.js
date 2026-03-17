@@ -1,47 +1,42 @@
 // ══════════════════════════════════════════════════════════════
-//  كشف.js — Silent Bot Scanner v3 (Advanced Cybersecurity Edition)
-//
-//  الأوامر:
-//  .هو     — في الخاص: جلب المجموعات وتحديد المجموعة المراقبة
-//  .كشف    — في المجموعة: استخراج النتائج + تنظيف الذاكرة
-//
-//  محركات الكشف (صامتة بالكامل — لا ترسل أي شيء):
-//  1. Signature ID        — كشف توقيعات مكتبات Node.js (3EB0, BAE5...)
-//  2. Instant Receipt     — استجابة الخوادم (أقل من 150 ملي ثانية)
-//  3. Zero Jitter         — انحراف معياري آلي (تذبذب شبه معدوم)
-//  4. Read-Without-Online — قراءة الرسائل بدون الاتصال بالخادم
-//  5. Ghost Connect       — اتصال برمجي سريع (أقل من ثانيتين)
+//  رادار.js — نظام كشف البوتات الشامل (S.A.P)
+//  متوافق تماماً مع بنية نظام NOVA / الجلسات التفاعلية
 // ══════════════════════════════════════════════════════════════
-
+import fs from 'fs-extra';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { jidDecode } from '@whiskeysockets/baileys';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// ── دوال التفاعل المساعدة (من نظامك) ──
+const react = (sock, msg, e) =>
+    sock.sendMessage(msg.key.remoteJid, { react: { text: e, key: msg.key } }).catch(() => {});
+const reactWait = (sock, msg) => react(sock, msg, '🕒');
+const reactOk   = (sock, msg) => react(sock, msg, '☑️');
+const reactFail = (sock, msg) => react(sock, msg, '✖️');
 
-// ── State (الذاكرة المؤقتة) ───────────────────────────────────
-const activeGroups  = new Set();          // مجموعات المراقبة النشطة
-const _detected     = new Map();          // jid → { groupId, reasons }
-const _receiptLog   = new Map();          // msgId → { sentAt, groupId }
-const _latencyBuf   = new Map();          // jid → [latencyMs…]
-const _presenceTs   = new Map();          // jid → { connectedAt, lastSeen }
-const _pending      = new Map();          // chatId → { groups, timer } لجلسة .هو
+const normalizeJid = jid => {
+    if (!jid) return '';
+    const part = jid.split('@')[0].split(':')[0];
+    const digits = part.replace(/\D/g, '');
+    return digits || part;
+};
 
-const REGISTERED    = Symbol('v3scanner_pro');
+// ── الذاكرة المشتركة للرادار (تعمل في الخلفية) ──
+if (!global.SAP) {
+    global.SAP = {
+        activeGroups: new Set(),
+        detected: new Map(),
+        receiptLog: new Map(),
+        latencyBuf: new Map(),
+        isRunning: false
+    };
+}
+const state = global.SAP;
 
-// ── ثوابت الكشف (Detection Thresholds) ────────────────────────
-const BOT_SIGNATURES         = ['3EB0', 'BAE5', 'B24E', 'DF39']; // توقيعات مكتبات البوتات المعروفة
-const VALID_ID_LENGTHS       = [16, 20, 22]; // أطوال المعرفات البرمجية
-const RECEIPT_BOT_MS         = 150;     // استجابة الخادم
-const JITTER_STDEV_MAX       = 40;      // أقصى انحراف معياري للبوت
-const LATENCY_MIN_SAMPLES    = 3;       // أقل عدد عينات لحساب التذبذب
-const READ_NO_PRESENT_MS     = 5_000;   // 5 ثواني
-const GHOST_CONNECT_MAX_MS   = 2_000;   // ثانيتين كحد أقصى للاتصال الشوكي
-const MAX_MEMORY_LOGS        = 1000;    // الحد الأقصى للسجلات لحماية الرام
+const BOT_SIGNATURES = ['3EB0', 'BAE5', 'B24E', 'DF39'];
+const VALID_ID_LENGTHS = [16, 20, 22];
 
-// ── دوال مساعدة ───────────────────────────────────────────────
-const norm = j => j?.split('@')[0]?.split(':')[0] || '';
-
-// دالة حساب الانحراف المعياري (الـ Jitter)
 function stdev(arr) {
     if (!arr || arr.length < 2) return 9999;
     const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
@@ -49,278 +44,215 @@ function stdev(arr) {
     return Math.sqrt(variance);
 }
 
-// دالة تسجيل البوتات المكتشفة
 function flag(jid, groupId, reason) {
     const key = `${jid}::${groupId}`;
-    if (!_detected.has(key)) {
-        _detected.set(key, { jid, groupId, reasons: new Set() });
+    if (!state.detected.has(key)) {
+        state.detected.set(key, { jid, groupId, reasons: new Set() });
     }
-    _detected.get(key).reasons.add(reason);
+    state.detected.get(key).reasons.add(reason);
 }
 
-// ══════════════════════════════════════════════════════════════
-//  محرك الكشف الصامت (The Core Engine)
-// ══════════════════════════════════════════════════════════════
+// ── محرك الفحص الصامت ──
 function startScanner(sock) {
-    if (sock[REGISTERED]) return;
-    sock[REGISTERED] = true;
+    if (state.isRunning) return;
+    state.isRunning = true;
 
-    // ──────────────────────────────────────────────────────────
-    //  ثغرة 1: Message-ID Signature (بصمة الحزمة)
-    // ──────────────────────────────────────────────────────────
     sock.ev.on('messages.upsert', ({ messages, type }) => {
         if (type !== 'notify') return;
         for (const msg of messages) {
             try {
                 if (msg.key.fromMe) continue;
                 const groupId = msg.key.remoteJid;
-                
-                // تجاهل الرسائل خارج المجموعات المراقبة لتوفير الموارد
-                if (!activeGroups.has(groupId)) continue;          
+                if (!state.activeGroups.has(groupId)) continue;
 
-                const jid   = msg.key.participant || groupId;
+                const jid = msg.key.participant || groupId;
                 const msgId = msg.key.id || '';
 
-                // فحص توقيعات مكتبات برمجية (Baileys/Whatsapp-web.js)
-                const isBotSig = BOT_SIGNATURES.some(sig => msgId.startsWith(sig));
-                const isValidLen = VALID_ID_LENGTHS.includes(msgId.length);
-                
-                if (isBotSig && isValidLen) {
+                if (BOT_SIGNATURES.some(sig => msgId.startsWith(sig)) && VALID_ID_LENGTHS.includes(msgId.length)) {
                     flag(jid, groupId, 'توقيع مكتبة برمجية (ID Signature)');
                 }
 
-                // تسجيل الرسالة لقياس الاستجابة (Latency)
-                _receiptLog.set(msgId, { sentAt: Date.now(), groupId });
-                
-                // تنظيف الذاكرة بشكل آمن
-                if (_receiptLog.size > MAX_MEMORY_LOGS) {
-                    const firstKey = _receiptLog.keys().next().value;
-                    _receiptLog.delete(firstKey);
-                }
+                state.receiptLog.set(msgId, { sentAt: Date.now(), groupId });
+                if (state.receiptLog.size > 1000) state.receiptLog.delete(state.receiptLog.keys().next().value);
             } catch {}
         }
     });
 
-    // ──────────────────────────────────────────────────────────
-    //  ثغرة 2 + 3 + 4: Latency / Jitter / Read-Without-Online
-    // ──────────────────────────────────────────────────────────
     sock.ev.on('message-receipt.update', (updates) => {
         const now = Date.now();
         for (const update of (updates || [])) {
             try {
-                const msgId   = update.key?.id;
+                const msgId = update.key?.id;
                 const groupId = update.key?.remoteJid;
-                const jid     = update.key?.participant || groupId;
+                const jid = update.key?.participant || groupId;
                 
-                if (!msgId || !jid || !activeGroups.has(groupId)) continue;
+                if (!msgId || !jid || !state.activeGroups.has(groupId)) continue;
 
-                const logged = _receiptLog.get(msgId);
+                const logged = state.receiptLog.get(msgId);
                 if (logged) {
                     const latency = now - logged.sentAt;
-
-                    // ثغرة 2: استجابة خادم خارقة (أسرع من 150ms)
-                    if (latency > 0 && latency < RECEIPT_BOT_MS) {
+                    if (latency > 0 && latency < 150) {
                         flag(jid, groupId, `سرعة خادم خارقة (${latency}ms)`);
                     }
-
-                    // ثغرة 3: Zero Jitter (تذبذب معدوم)
-                    if (latency > 0 && latency < 30_000) {
-                        if (!_latencyBuf.has(jid)) _latencyBuf.set(jid, []);
-                        const buf = _latencyBuf.get(jid);
+                    if (latency > 0 && latency < 30000) {
+                        if (!state.latencyBuf.has(jid)) state.latencyBuf.set(jid, []);
+                        const buf = state.latencyBuf.get(jid);
                         buf.push(latency);
-                        
-                        // الاحتفاظ بآخر 20 عينة فقط
                         if (buf.length > 20) buf.shift();
-                        
-                        if (buf.length >= LATENCY_MIN_SAMPLES) {
-                            const currentJitter = stdev(buf);
-                            if (currentJitter < JITTER_STDEV_MAX) {
-                                flag(jid, groupId, `انحراف معياري آلي (±${Math.round(currentJitter)}ms)`);
-                            }
+                        if (buf.length >= 3 && stdev(buf) < 40) {
+                            flag(jid, groupId, `انحراف معياري آلي`);
                         }
-                    }
-                }
-
-                // ثغرة 4: Read-Without-Online (قراءة الشبح)
-                const readTs = update.receipt?.readTimestamp || update.receipt?.receiptTimestamp;
-                if (readTs) {
-                    const pData    = _presenceTs.get(jid) || {};
-                    const lastSeen = pData.lastSeen || 0;
-                    const readMs   = readTs * 1000;
-                    if (!lastSeen || (readMs - lastSeen) > READ_NO_PRESENT_MS) {
-                        flag(jid, groupId, 'قراءة صامتة (بدون تواجد شبكي)');
                     }
                 }
             } catch {}
         }
     });
-
-    // ──────────────────────────────────────────────────────────
-    //  ثغرة 5: Ghost Connect (تذبذب حالة الاتصال)
-    // ──────────────────────────────────────────────────────────
-    sock.ev.on('presence.update', ({ id: groupId, presences }) => {
-        if (!activeGroups.has(groupId)) return;
-        const now = Date.now();
-        
-        for (const [jid, data] of Object.entries(presences || {})) {
-            if (!_presenceTs.has(jid)) _presenceTs.set(jid, {});
-            const pData = _presenceTs.get(jid);
-            const s     = data?.lastKnownPresence;
-
-            if (s === 'available') {
-                pData.connectedAt = now;
-                pData.lastSeen    = now;
-            } else if (s === 'composing' || s === 'recording') {
-                pData.lastSeen = now;
-            } else if (s === 'unavailable' && pData.connectedAt) {
-                const onlineDuration = now - pData.connectedAt;
-                if (onlineDuration < GHOST_CONNECT_MAX_MS) {
-                    flag(jid, groupId, `اتصال شبحي سريع (${onlineDuration}ms)`);
-                }
-                pData.connectedAt = null;
-            }
-        }
-    });
 }
 
-// ══════════════════════════════════════════════════════════════
-//  تكوين الأوامر (Plugins Metadata)
-// ══════════════════════════════════════════════════════════════
-const KashfPlugin = {
-    command:     'كشف',
-    description: 'استخراج نتائج الرادار الصامت',
-    elite:       'on',
-    group:       false,
-    prv:         false,
-    lock:        'off',
+// ── إدارة الجلسات ──
+const activeSessions = new Map();
+
+// ── إعداد البلاجن ──
+const RadarPlugin = {
+    command: 'كشف', 
+    description: 'نظام كشف البوتات الشامل (S.A.P)',
+    elite: 'on',
+    group: false, // يعمل في الخاص والعام بذكاء
+    prv: false,
+    lock: 'off',
 };
 
-const TafeilPlugin = {
-    command:     'هو',
-    description: 'تفعيل المراقبة عن بعد (للخاص)',
-    elite:       'on',
-    group:       false,
-    prv:         true,
-    lock:        'off',
-};
-
-// ──────────────────────────────────────────────────────────────
-//  أمر .هو — (لوحة التحكم في الخاص)
-// ──────────────────────────────────────────────────────────────
-async function executeTafeil({ sock, msg }) {
-    const chatId  = msg.key.remoteJid;
+// ── دالة التنفيذ الأساسية ──
+async function execute({ sock, msg }) {
+    const chatId = msg.key.remoteJid;
     const isGroup = chatId.endsWith('@g.us');
-    if (isGroup) return; // يعمل في الخاص فقط
-
+    
+    // تشغيل المحرك في الخلفية (مرة واحدة فقط)
     startScanner(sock);
 
-    let groups;
-    try {
-        const all = await sock.groupFetchAllParticipating();
-        groups = Object.entries(all).map(([id, g]) => ({ id, name: g.subject || id }));
-    } catch {
+    if (activeSessions.has(chatId)) {
+        reactWait(sock, msg);
+        await sock.sendMessage(chatId, { text: '⏳ *هناك جلسة كاشف نشطة حالياً.* الرجاء إكمالها أو الانتظار.' }, { quoted: msg });
         return;
     }
 
-    if (!groups.length) {
-        return sock.sendMessage(chatId, { text: '❌ لا توجد مجموعات متاحة.' });
+    if (!isGroup) {
+        // ══════════════════════════════════════════════════════════════
+        //  1. وضع الخاص (غرفة العمليات لاختيار المجموعة)
+        // ══════════════════════════════════════════════════════════════
+        reactWait(sock, msg);
+        let groups;
+        try {
+            const all = await sock.groupFetchAllParticipating();
+            groups = Object.entries(all).map(([id, g]) => ({ id, name: g.subject || id }));
+        } catch {
+            reactFail(sock, msg);
+            return sock.sendMessage(chatId, { text: '❌ لا توجد مجموعات متاحة.' });
+        }
+
+        if (!groups.length) {
+            reactFail(sock, msg);
+            return sock.sendMessage(chatId, { text: '❌ البوت غير موجود في أي مجموعة.' });
+        }
+
+        const list = groups.map((g, i) => `*${i + 1}.* ${g.name}`).join('\n');
+        const menuText = `📡 *لوحة تحكم كاشف البوتات الصامت*\n\nالرجاء إرسال رقم المجموعة لتفعيل وضع المراقبة بداخلها:\n\n${list}\n\n*للخروج أرسل:* الغاء`;
+        
+        await sock.sendMessage(chatId, { text: menuText }, { quoted: msg });
+        reactOk(sock, msg);
+
+        // إنشاء جلسة انتظار للرد (نفس نظام-3.js)
+        const cleanup = () => {
+            sock.ev.off('messages.upsert', listener);
+            activeSessions.delete(chatId);
+        };
+
+        const listener = async ({ messages, type }) => {
+            if (type !== 'notify') return;
+            const m = messages[0];
+            if (!m || m.key.remoteJid !== chatId || m.key.fromMe) return;
+
+            const text = (m.message?.conversation || m.message?.extendedTextMessage?.text || '').trim();
+            
+            if (text === 'الغاء' || text === 'إلغاء') {
+                reactOk(sock, m);
+                await sock.sendMessage(chatId, { text: '☑️ تم إلغاء العملية.' });
+                return cleanup();
+            }
+
+            const num = parseInt(text);
+            if (!isNaN(num) && num > 0 && num <= groups.length) {
+                const chosen = groups[num - 1];
+                
+                // تفعيل الرادار للمجموعة المختارة
+                state.activeGroups.add(chosen.id);
+                try { await sock.presenceSubscribe(chosen.id); } catch {}
+                
+                reactOk(sock, m);
+                await sock.sendMessage(chatId, {
+                    text: `✅ *تم تفعيل المراقب بنجاح*\n📍 *الهدف:* _${chosen.name}_\n\nالمراقب الآن يعمل في الخلفية بصمت. اذهب للمجموعة وأرسل الطعوم، ثم اكتب \`.كشف\` هناك لاستخراج النتائج.`
+                });
+                cleanup();
+            } else {
+                reactFail(sock, m);
+            }
+        };
+
+        sock.ev.on('messages.upsert', listener);
+        activeSessions.set(chatId, { listener, cleanupFn: cleanup });
+        
+        // إغلاق الجلسة التلقائي بعد دقيقتين
+        setTimeout(() => {
+            if (activeSessions.has(chatId)) {
+                sock.sendMessage(chatId, { text: '⏱️ انتهى وقت الجلسة.' }).catch(() => {});
+                cleanup();
+            }
+        }, 120_000);
+
+    } else {
+        // ══════════════════════════════════════════════════════════════
+        //  2. وضع المجموعة (استخراج النتائج والفضح)
+        // ══════════════════════════════════════════════════════════════
+        reactWait(sock, msg);
+
+        if (!state.activeGroups.has(chatId)) {
+            reactFail(sock, msg);
+            return sock.sendMessage(chatId, {
+                text: '⚠️ المراقب غير مفعل في هذه المجموعة.\nقم بتفعيله من الخاص أولاً بإرسال `.كشف`'
+            }, { quoted: msg }).catch(() => {});
+        }
+
+        const found = [...state.detected.values()].filter(e => e.groupId === chatId);
+
+        if (!found.length) {
+            reactOk(sock, msg);
+            return sock.sendMessage(chatId, {
+                text: '🛡️ _لم يتم رصد أي نشاط آلي حتى الآن._'
+            }, { quoted: msg }).catch(() => {});
+        }
+
+        let counter = 1;
+        for (const entry of found) {
+            const mention = entry.jid.includes('@') ? entry.jid : entry.jid + '@s.whatsapp.net';
+            const reasonsList = Array.from(entry.reasons).join(' | ');
+
+            await sock.sendMessage(chatId, {
+                text: `@${normalizeJid(mention)}\nتم كشف البوت رقم ${counter}\n\n🔍 _السبب: ${reasonsList}_`,
+                mentions: [mention]
+            }).catch(() => {});
+
+            counter++;
+            await new Promise(r => setTimeout(r, 1000));
+        }
+
+        // تنظيف الذاكرة للمجموعة وإيقاف المراقبة
+        state.activeGroups.delete(chatId);
+        for (const key of [...state.detected.keys()]) {
+            if (key.endsWith(`::${chatId}`)) state.detected.delete(key);
+        }
+        
+        reactOk(sock, msg);
     }
-
-    const list = groups.map((g, i) => `*${i + 1}.* ${g.name}`).join('\n');
-    await sock.sendMessage(chatId, {
-        text: `📡 *لوحة تحكم الرادار الصامت*\n\nالرجاء إرسال رقم المجموعة لتفعيل الرادار بداخلها:\n\n${list}`,
-    }).catch(() => {});
-
-    // حفظ الجلسة لمدة دقيقة لانتظار الرد
-    const timer = setTimeout(() => _pending.delete(chatId), 60_000);
-    _pending.set(chatId, { groups, timer });
 }
 
-// معالج الرد على رقم المجموعة
-async function pendingHandler(sock, msg) {
-    try {
-        if (!msg?.message || msg.key.fromMe) return;
-        const chatId  = msg.key.remoteJid;
-        if (chatId.endsWith('@g.us')) return;
-        if (!_pending.has(chatId)) return;
-
-        const text = (msg.message.conversation || msg.message.extendedTextMessage?.text || '').trim();
-        const num  = parseInt(text);
-        if (isNaN(num)) return;
-
-        const { groups, timer } = _pending.get(chatId);
-        clearTimeout(timer);
-        _pending.delete(chatId);
-
-        const chosen = groups[num - 1];
-        if (!chosen) return;
-
-        // تفعيل الرادار للمجموعة
-        activeGroups.add(chosen.id);
-        
-        // إجبار السيرفر على جلب حالات التواجد للمجموعة
-        try { await sock.presenceSubscribe(chosen.id); } catch {}
-
-        await sock.sendMessage(chatId, {
-            text: `✅ *تم تفعيل الرادار بنجاح*\n\n📍 *الهدف:* _${chosen.name}_\n\nالرادار الآن يعمل في الخلفية بصمت. اذهب للمجموعة وأرسل الطعوم، ثم اكتب \`.كشف\`.`,
-        }).catch(() => {});
-    } catch {}
-}
-pendingHandler._src = 'kashf_pending_v3';
-
-// دمج معالج الرد في البيئة الخاصة بك بشكل آمن
-if (!global.featureHandlers) global.featureHandlers = [];
-global.featureHandlers = global.featureHandlers.filter(h => h._src !== 'kashf_pending_v3');
-global.featureHandlers.push(pendingHandler);
-
-// ──────────────────────────────────────────────────────────────
-//  أمر .كشف — (استخراج النتائج في المجموعة)
-// ──────────────────────────────────────────────────────────────
-async function executeKashf({ sock, msg }) {
-    const chatId  = msg.key.remoteJid;
-    const isGroup = chatId.endsWith('@g.us');
-    if (!isGroup) return;
-
-    startScanner(sock);
-
-    // فلترة البوتات المرصودة لهذه المجموعة فقط
-    const found = [..._detected.values()].filter(e => e.groupId === chatId);
-
-    if (!found.length) {
-        return sock.sendMessage(chatId, {
-            text: '🛡️ _لم يتم رصد أي نشاط آلي حتى الآن._',
-        }, { quoted: msg }).catch(() => {});
-    }
-
-    let counter = 1;
-    for (const entry of found) {
-        const mention = entry.jid.includes('@') ? entry.jid : entry.jid + '@s.whatsapp.net';
-        
-        // تحويل أسباب الكشف إلى نص مقروء
-        const reasonsList = Array.from(entry.reasons).join(' | ');
-
-        await sock.sendMessage(chatId, {
-            text: `@${norm(mention)}\nتم كشف البوت رقم ${counter}\n\n🔍 _السبب: ${reasonsList}_`,
-            mentions: [mention],
-        }).catch(() => {});
-
-        counter++;
-        
-        // تأخير زمني 1 ثانية لتجنب حظر رسائل الواتساب (Rate Limit)
-        await new Promise(r => setTimeout(r, 1000));
-    }
-
-    // تنظيف الذاكرة بعد الاستخراج وإيقاف المراقبة لهذه المجموعة
-    activeGroups.delete(chatId);
-    for (const key of [..._detected.keys()]) {
-        if (key.endsWith(`::${chatId}`)) _detected.delete(key);
-    }
-}
-
-// ──────────────────────────────────────────────────────────────
-//  تصدير الأوامر لتعمل مع نظام الـ Loader الخاص بك
-// ──────────────────────────────────────────────────────────────
-export const kashf  = { ...KashfPlugin,  execute: executeKashf  };
-export const tafeil = { ...TafeilPlugin, execute: executeTafeil };
-
-export default { ...KashfPlugin, execute: executeKashf };
+export default { ...RadarPlugin, execute };
