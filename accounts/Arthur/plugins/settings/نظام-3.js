@@ -2238,10 +2238,11 @@ function getVideoFormats(url) {
         ];
     }
     if (isYouTube(url)) {
-        // YouTube: أبسط format يعمل بدون merge معقد
+        // 480p مدمج أسرع (لا merge) — 360p كـ fallback
         return [
-            'bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/best[ext=mp4][height<=480]/best[ext=mp4]/best',
-            'best[height<=480]/best',
+            'best[ext=mp4][height<=480]',
+            'best[ext=mp4][height<=360]',
+            'best[ext=mp4]',
             'best',
         ];
     }
@@ -3528,128 +3529,40 @@ ${lines}
             // (رابط التحميل من API يتطلب Premium → نستعمله للـ thumbnail فقط)
             // ══════════════════════════════════════
             if (isYT) {
-                // ── جلب المعلومات والـ thumbnail من yts (مجاني دائماً) ──
-                let videoInfo = null;
-                if (yts) {
-                    try {
-                        const search   = await yts(url);
-                        const vidMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|shorts\/|live\/|embed\/))([a-zA-Z0-9_-]{11})/);
-                        videoInfo = vidMatch
-                            ? search.videos?.find(v => v.videoId === vidMatch[1]) || search.all?.[0]
-                            : search.all?.[0];
-                    } catch {}
-                }
+                // ── yt-dlp مباشرة: أسرع وبدون API وسيط ──────────────
+                try {
+                    const { filePath: ytFp, ext: ytExt, cleanup: ytClean } =
+                        await ytdlpDownload(url, { audio: audioOnly });
+                    const ytSize = fs.statSync(ytFp).size;
+                    const ytBuf  = await fs.promises.readFile(ytFp); ytClean();
+                    const isAud  = audioOnly || ['mp3','m4a','ogg','aac','opus'].includes(ytExt);
+                    const isVid  = ['mp4','mkv','webm','mov'].includes(ytExt);
 
-                // ── إرسال thumbnail + معلومات ──
-                if (videoInfo) {
-                    try {
-                        const thumbBuf = await downloadImageBuffer(videoInfo.image || videoInfo.thumbnail).catch(() => null);
-                        const views    = (videoInfo.views || 0).toLocaleString('ar');
-                        const canal    = videoInfo.author?.name || videoInfo.author || 'غير معروف';
-                        const caption  =
-`${audioOnly ? '🎵' : '🎬'} *${videoInfo.title || 'يوتيوب'}*
-
-📺 *القناة:* ${canal}
-⏱️ *المدة:* ${videoInfo.timestamp || videoInfo.duration || '؟'}
-👁️ *المشاهدات:* ${views}
-📅 *النشر:* ${videoInfo.ago || '؟'}
-🔗 ${videoInfo.url || url}
-
-⏳ _جاري التحميل..._`;
-                        if (thumbBuf) await sock.sendMessage(chatId, { image: thumbBuf, caption }, { quoted: m });
-                    } catch {}
-                }
-
-                const title = videoInfo?.title || 'يوتيوب';
-
-                // ── تحميل: cobalt (مجاني أسرع) → ytmp41 fallback ──
-                session.attempts = 0;
-                let apiResult = null;
-
-                // cobalt.tools: مجاني، أسرع، بدون انتظار polling
-                if (!audioOnly) {
-                    try {
-                        const cobaltResp = await fetch('https://api.cobalt.tools/', {
-                            method:  'POST',
-                            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                            body:    JSON.stringify({ url, videoQuality: '720', downloadMode: 'auto', filenameStyle: 'basic' }),
-                            signal:  AbortSignal.timeout(15_000),
-                        });
-                        if (cobaltResp.ok) {
-                            const cj = await cobaltResp.json();
-                            if ((cj.status === 'redirect' || cj.status === 'tunnel') && cj.url)
-                                apiResult = { url: cj.url, title };
-                            else if (cj.status === 'picker' && cj.picker?.[0]?.url)
-                                apiResult = { url: cj.picker[0].url, title };
-                        }
-                    } catch {}
-                }
-
-                // ytmp41 كـ fallback أو للصوت
-                if (!apiResult) {
-                    apiResult = await withRetry(
-                        () => audioOnly ? ytmp41.audio(url) : ytmp41.video(url, '480'),
-                        'ytmp41', 2
-                    ).catch(() => null);
-                }
-
-                if (apiResult?.url) {
-                    try {
-                        const buf = await downloadImageBuffer(apiResult.url);
-                        if (audioOnly) {
-                            await sock.sendMessage(chatId, {
-                                audio:    buf,
-                                mimetype: 'audio/mpeg',
-                                ptt:      false,
-                                fileName: `${title}.mp3`,
-                            }, { quoted: m });
-                        } else {
-                            const sz = buf.length;
-                            // > 70MB → مستند بدل فيديو
-                            if (sz > 70 * 1024 * 1024) {
-                                await sock.sendMessage(chatId, {
-                                    document: buf,
-                                    mimetype: 'video/mp4',
-                                    fileName: `${title}.mp4`,
-                                    caption:  `📎 *${title}*\n📦 الحجم: ${(sz/1024/1024).toFixed(1)}MB`,
-                                }, { quoted: m });
-                            } else {
-                                await sock.sendMessage(chatId, {
-                                    video:   buf,
-                                    caption: `🎬 *${title}*`,
-                                }, { quoted: m });
-                            }
-                        }
-                        reactOk(sock, m);
-                        await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
-                        return;
-                    } catch (e) {
-                        console.error('[ytmp41] فشل الإرسال:', e.message);
-                        /* fallthrough to yt-dlp */
-                    }
-                }
-
-                // ── yt-dlp: صوت فقط كـ fallback ──
-                if (audioOnly) {
-                    try {
-                        const { filePath: ytFp, cleanup: ytClean } = await ytdlpDownload(url, { audio: true });
-                        const ytBuf = await fs.promises.readFile(ytFp); ytClean();
+                    if (isAud) {
                         await sock.sendMessage(chatId, {
                             audio: ytBuf, mimetype: 'audio/mpeg', ptt: false,
-                            fileName: `${title}.mp3`,
+                            fileName: 'youtube.mp3',
                         }, { quoted: m });
-                        reactOk(sock, m);
-                        await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
-                        return;
-                    } catch (e) {
-                        reactFail(sock, m);
-                        await update(`❌ *فشل تحميل الصوت*\n${(e?.message || '').slice(0, 100)}\n\n🔙 *رجوع*`);
-                        return;
+                    } else if (isVid && ytSize > 70 * 1024 * 1024) {
+                        await sock.sendMessage(chatId, {
+                            document: ytBuf, mimetype: 'video/mp4',
+                            fileName: 'youtube.mp4',
+                            caption:  `📎 يوتيوب — ${(ytSize/1024/1024).toFixed(1)}MB`,
+                        }, { quoted: m });
+                    } else {
+                        await sock.sendMessage(chatId, {
+                            video: ytBuf, caption: `🎬 *يوتيوب*`,
+                        }, { quoted: m });
                     }
+                    reactOk(sock, m);
+                    await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
+                    return;
+                } catch (e) {
+                    reactFail(sock, m);
+                    const hint = e?.message?.includes('غير مثبت') ? '\n💡 شغّل: pip install -U yt-dlp' : '';
+                    await update(`❌ *فشل تحميل يوتيوب*\n${(e?.message||'').slice(0,100)}${hint}\n\n🔙 *رجوع*`);
+                    return;
                 }
-                reactFail(sock, m);
-                await update(`❌ *فشل تحميل يوتيوب*\n_جرب مرة أخرى._\n\n🔙 *رجوع*`);
-                return;
             }
             // ══════════════════════════════════════
             // انستقرام: cobalt → snapsave → savefrom → yt-dlp
