@@ -104,11 +104,18 @@ function addPoints(jid, pts) {
     } catch {}
     return all[key];
 }
+function getRank(pts) {
+    if (pts >= 51) return "🌟 أسطورة الأنمي";
+    if (pts >= 21) return "⚔️ صياد محترف";
+    return "🥷 نينجا مبتدئ";
+}
+
 function getTopPoints(n = 5) {
     const all = readPoints();
     return Object.entries(all)
         .sort((a, b) => b[1] - a[1])
-        .slice(0, n);
+        .slice(0, n)
+        .map(([num, pts]) => [num, pts, getRank(pts)]);
 }
 
 // نقاط كل حدث
@@ -119,35 +126,36 @@ const PTS = {
     SPY_GUESSES_WORD:   4,  // جاسوس خمّن الكلمة
 };
 
-//  قاعدة بيانات الأنمي
+//  قاعدة بيانات الأماكن — ألغاز وصفية غامضة
 
-const ANIME_DB = [
-    { word: "لوفي",    question: "قرصان يحلم بالحرية، أكل فاكهة مطاطية، وعلامته المميزة قبعة قش.. من هو؟" },
-    { word: "ناروتو",  question: "نينجا منبوذ في البداية، حلمه يصير هوكاجي، وداخله وحش بذيول كثيرة.. من هو؟" },
-    { word: "زورو",    question: "سياف يستخدم 3 سيوف، شعره أخضر، ودايماً يضيع طريقه حتى لو المكان قدامه.. من هو؟" },
-    { word: "إيتاتشي", question: "ضحى بعشيرته لأجل القرية، يمتلك شارينغان مرعبة، وهو أخ ساسكي الأكبر.. من هو؟" },
-    { word: "كونان",   question: "متحري ذكي تقلص جسده بسبب عصابة سوداء، وين ما يروح تصير جريمة.. من هو؟" },
-    { word: "غوكو",    question: "من عرق السايان، يحب الأكل والقتال، وتحوله الشهير شعره يصير ذهبي.. من هو؟" },
-    { word: "ليفاي",   question: "أقوى جندي في البشرية، قصير القامة، مهووس بالنظافة ويقطع العمالقة.. من هو؟" },
-    { word: "إيرين",   question: "كان يحلم برؤية ما وراء الجدران، تحول لعملاق، وطالب بالحرية بطريقة مرعبة.. من هو؟" },
-    { word: "كانيكي",  question: "طالب جامعي تحول لنصف غول، شعره تحول للأبيض وأصبح يحب أكل اللحم.. من هو؟" },
-    { word: "كيلوا",   question: "من عائلة قتلة مأجورين، صديق غون المفضل، ويستخدم البرق في قتاله.. من هو؟" },
-    { word: "سايتاما", question: "بطل خارق يهزم أي عدو بضربة واحدة، وأكبر مشاكله الملل والصلع.. من هو؟" },
-    { word: "لايت",    question: "طالب عبقري وجد مفكرة تقتل الناس بكتابة أسمائهم، يلقب بـ كيرا.. من هو؟" },
-    { word: "إل",      question: "أعظم متحري في العالم، يحب الحلويات، ويجلس بطريقة غريبة دايماً.. من هو؟" },
-    { word: "سانجي",   question: "طباخ طاقم قبعة القش، يستخدم أرجله في القتال، ولا يضرب النساء أبداً.. من هو؟" },
-    { word: "تانجيرو", question: "صياد شيطين يحمل أخته في صندوق على ظهره، ويستخدم تنفس الماء.. من هو؟" },
-    { word: "ميكا",    question: "من هجوم العمالقة، قوية جداً ودائماً تلبس وشاحاً أحمر أعطاه لها إيرين.. من هي؟" },
-    { word: "غون",     question: "طفل صياد يبحث عن والده، سلاحه المفضل صنارة الصيد، وبريء جداً.. من هو؟" },
-    { word: "ايزن",    question: "كان قائد فرقة في بليتش، خان الجميع، وخطته كانت مرسومة منذ مئات السنين.. من هو؟" },
-    { word: "مادارا",  question: "أسطورة الأوتشيها، أعلن حرب النينجا العظمى، وطلب من الجميع الرقص.. من هو؟" },
-    { word: "كاشي",   question: "النينجا النسخ، دايماً يغطي عينه وقناعه ما ينزل، ويحب قراءة روايات معينة.. من هو؟" },
+const LOCATIONS_DB = [
+    { word: "مستشفى",   question: "رائحة المطهرات تملأ الهواء، أصوات أجهزة غريبة لا تتوقف، والكل هنا إما ينتظر خبراً أو يخشاه.. أين أنت؟" },
+    { word: "مطار",     question: "حقائب تجري، لغات مختلطة، وساعات على الجدران تشير لمدن لا تعرف بعضها.. أين أنت؟" },
+    { word: "سجن",      question: "القضبان الحديدية تُحكم إغلاقها عند الغروب، والوقت هنا لا يمشي — بل يزحف.. أين أنت؟" },
+    { word: "غابة",     question: "الأشجار تحجب السماء، الأصوات لا تُعرف مصادرها، والطريق يبدو متشابهاً في كل الاتجاهات.. أين أنت؟" },
+    { word: "عرس",      question: "الموسيقى صاخبة، الملابس فاخرة، والجميع يبتسم لكن نصفهم لا يعرف نصف الحضور.. أين أنت؟" },
+    { word: "مقبرة",    question: "الصمت هنا ثقيل من نوع مختلف، الأحجار تحمل تواريخ، والزائرون يتكلمون بصوت خافت.. أين أنت؟" },
+    { word: "مطعم",     question: "روائح متضاربة، أصوات صحون، وطاولات تخفي محادثات يريد أصحابها ألا يسمعها أحد.. أين أنت؟" },
+    { word: "قاعة محكمة", question: "شخص يقف وحيداً أمام الجميع، والكلمات هنا تحمل ثقل السنوات.. أين أنت؟" },
+    { word: "ملعب",     question: "آلاف الأصوات تصرخ باسم واحد، الأرض مرسوم عليها خطوط بيضاء، والجميع ينظر في اتجاه واحد.. أين أنت؟" },
+    { word: "مختبر",    question: "أنابيب وأرقام وأشياء لا تعرف اسمها، كل خطأ هنا قد لا يُمحى.. أين أنت؟" },
+    { word: "فندق",     question: "أبواب متطابقة بلا نهاية، غرباء يتقاسمون الممرات، وكل واحد يحمل سر إقامته.. أين أنت؟" },
+    { word: "بنك",      question: "أبواب فولاذية، كاميرات في كل زاوية، والصمت هنا من نوع مختلف عن الهدوء.. أين أنت؟" },
+    { word: "ميناء",    question: "السفن ضخمة والبضائع مجهولة، الضباب يغطي ما تبقى من أفق، والبحر لا يسأل عن هويتك.. أين أنت؟" },
+    { word: "قطار",     question: "النوافذ تمرر مناظر لا تتوقف، المقاعد تجمع غرباء لساعات، ثم تفرقهم إلى الأبد.. أين أنت؟" },
+    { word: "جامعة",    question: "أفكار تتصادم في كل ممر، كتب ثقيلة وأسئلة أثقل، وكل شخص يبحث عن إجابة مختلفة.. أين أنت؟" },
+    { word: "كازينو",   question: "الأضواء لا تنطفئ والوقت لا معنى له، الجميع يراهن على شيء — بعضهم على المال وبعضهم على أكثر.. أين أنت؟" },
+    { word: "سفارة",    question: "الأعلام تشير لأماكن بعيدة، الجوازات تفتح أحياناً والأبواب لا تُفتح دائماً.. أين أنت؟" },
+    { word: "مخزن سري", question: "لا نوافذ ولا لافتات، البضاعة هنا ليست للبيع في أي سوق معروف.. أين أنت؟" },
+    { word: "سيرك",     question: "المهرجون يخفون وجوههم والبهجة تبدو أحياناً حزينة من كثب، والجميع يشاهد لكن لا أحد يفهم كل شيء.. أين أنت؟" },
+    { word: "منجم",     question: "الظلام يبدأ من بضعة أمتار تحتك، الجدران تضيق والهواء يثقل، والذهب لا يكشف عن نفسه بسهولة.. أين أنت؟" },
 ];
-const usedWords = new Set(); // نتجنب تكرار الكلمة في نفس اللعبة
+
+const usedWords = new Set();
 
 function pickWord() {
-    const available = ANIME_DB.filter(e => !usedWords.has(e.word));
-    if (!available.length) usedWords.clear(); // أعد الدورة
+    const available = LOCATIONS_DB.filter(e => !usedWords.has(e.word));
+    if (!available.length) usedWords.clear();
     const entry = available[Math.floor(Math.random() * available.length)];
     usedWords.add(entry.word);
     return entry;
@@ -184,53 +192,119 @@ async function listenRound(sock, chatId, players, validFn, durationMs) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  مرحلة الجواب (15 ثانية) — كتابة الكلمة
+//  مرحلة الجواب (15 ثانية) — كتابة الكلمة + تلميح بعد 7 ثوانٍ
 // ══════════════════════════════════════════════════════════════
 async function phaseAnswer(sock, chatId, players, secretWord) {
-    return listenRound(sock, chatId, players,
-        (m) => {
-            const txt = (m.message.conversation || m.message.extendedTextMessage?.text || "")
-                .trim().toLowerCase();
-            if (txt === secretWord) return true;   // صحيح
-            if (txt.length > 1)    return false;   // خطأ (تجاهل رسائل قصيرة جداً)
-            return null;  // لا نسجل
-        },
-        15000
-    );
-}
-
-// ══════════════════════════════════════════════════════════════
-//  مرحلة التصويت (30 ثانية) — منشن الجاسوس المشتبه
-// ══════════════════════════════════════════════════════════════
-async function phaseVote(sock, chatId, voters, allPlayers, cache) {
-    // votes: Map<voter, nominatedJid>
-    const votes = new Map();
+    const start    = Date.now();
+    const recorded = new Map();
+    let   hintSent = false;
 
     const rl = ({ messages }) => {
         const m = messages[0];
         if (!m?.message || m.key.remoteJid !== chatId) return;
         const rawFrom = m.key.participant || m.key.remoteJid;
         const fromNum = numOf(rawFrom);
-        const voter   = voters.find(p => numOf(p) === fromNum);
+        const matchP  = players.find(p => numOf(p) === fromNum);
+        if (!matchP || recorded.has(matchP)) return;
+
+        const txt = (m.message.conversation || m.message.extendedTextMessage?.text || "")
+            .trim().toLowerCase();
+        let result = null;
+        if (txt === secretWord) result = true;
+        else if (txt.length > 1) result = false;
+
+        if (result !== null) {
+            recorded.set(matchP, { time: Date.now() - start, data: result });
+            // ✅ فقط للصحيح — لا نكشف ❌ فوراً حتى لا يعرف الجاسوس من أخطأ
+            if (result === true) {
+                sock.sendMessage(chatId, {
+                    react: { text: "✅", key: m.key }
+                }).catch(() => {});
+            }
+        }
+    };
+
+    sock.ev.on("messages.upsert", rl);
+
+    // تلميح بعد 7 ثوانٍ — أول حرف من الكلمة السرية
+    const hintTimer = setTimeout(async () => {
+        if (hintSent) return;
+        hintSent = true;
+        const hint = secretWord.charAt(0).toUpperCase();
+        await sock.sendMessage(chatId, {
+            text: `💡 *تلميح:* المكان يبدأ بحرف ➜ *${hint}*`,
+        }).catch(() => {});
+    }, 7000);
+
+    try { await wait(15000); }
+    finally {
+        clearTimeout(hintTimer);
+        sock.ev.off("messages.upsert", rl);
+    }
+    return recorded;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  مرحلة التصويت (30 ثانية) — عبر الخاص (DM) سري
+// ══════════════════════════════════════════════════════════════
+async function phaseVote(sock, chatId, voters, allPlayers, cache) {
+    const votes = new Map(); // voter → nominatedJid
+
+    // إرسال تعليمات التصويت لكل ناخب في الخاص
+    for (const voter of voters) {
+        const phone = resolveJid(voter, cache) || voter;
+        const playerList = allPlayers
+            .filter(p => numOf(p) !== numOf(voter))
+            .map((p, i) => {
+                const ph = resolveJid(p, cache) || p;
+                return `${i + 1}. @${numOf(ph)}`;
+            })
+            .join("\n");
+        await sock.sendMessage(phone,
+`🗳️ *وقت التصويت السري!*
+
+📋 *اللاعبون:*
+${playerList}
+
+✍️ *اكتب رقم أو اسم من تشك أنه الجاسوس*
+_لديك 30 ثانية — لن يعرف أحد تصويتك_`
+        ).catch(() => {});
+        await wait(100);
+    }
+
+    const pendingNums = new Set(voters.map(v => numOf(resolveJid(v, cache) || v)));
+
+    const rl = ({ messages }) => {
+        const m = messages[0];
+        if (!m?.message) return;
+        const jid = m.key.remoteJid;
+        // رسالة خاصة فقط
+        if (!jid || jid.includes("@g.us") || jid.includes("@broadcast") || m.key.fromMe) return;
+
+        const senderNum = numOf(jid);
+        if (!pendingNums.has(senderNum)) return;
+
+        const voter = voters.find(v => numOf(resolveJid(v, cache) || v) === senderNum);
         if (!voter || votes.has(voter)) return;
 
-        // استخراج أول منشن في الرسالة
-        const ctx       = m.message.extendedTextMessage?.contextInfo;
-        const mentioned = ctx?.mentionedJid?.[0];
-        if (!mentioned) return;
+        const txt = (m.message.conversation || m.message.extendedTextMessage?.text || "").trim();
+        if (!txt) return;
 
-        // resolve LID → phone
-        const mentionedPhone = resolveJid(mentioned, cache) || mentioned;
-        const mentionedNum   = numOf(mentionedPhone);
+        // بحث عن اللاعب بالرقم أو الاسم الجزئي
+        const txtLow = txt.toLowerCase();
+        const byIndex = /^\d+$/.test(txt)
+            ? allPlayers.filter(p => numOf(p) !== numOf(voter))[parseInt(txt) - 1]
+            : null;
+        const byName = allPlayers.find(p => {
+            const ph = resolveJid(p, cache) || p;
+            return numOf(ph).includes(txtLow) || txtLow.includes(numOf(ph).slice(-4));
+        });
 
-        // تأكد أن المُشار إليه من اللاعبين
-        const nominated = allPlayers.find(p => numOf(p) === mentionedNum);
-        if (!nominated) return;
+        const nominated = byIndex || byName;
+        if (!nominated || numOf(nominated) === numOf(voter)) return;
 
         votes.set(voter, nominated);
-        sock.sendMessage(chatId, {
-            react: { text: "🗳️", key: m.key }
-        }).catch(() => {});
+        sock.sendMessage(jid, { text: "✅ *تم تسجيل صوتك بسرية!*" }).catch(() => {});
     };
 
     sock.ev.on("messages.upsert", rl);
@@ -260,9 +334,10 @@ function countVotes(votes, candidates) {
     return { winnerJid, tally, max };
 }
 
-const activeGames   = new Map();
-const LARGE_GROUP   = 25;  // حد المجموعة الكبيرة — يُفعَّل نظام .شارك
-const pendingSignup = new Map(); // chatId → { players: Set, timeout, cache }
+const activeGames = new Map();
+// وضع كل مجموعة: "اقصاء" (خروج من اللعبة فقط) | "طرد" (طرد من المجموعة)
+const groupMode = new Map(); // chatId → "اقصاء" | "طرد"
+const getMode   = chatId => groupMode.get(chatId) || "طرد";
 
 // ══════════════════════════════════════════════════════════════
 const NovaUltra = {
@@ -285,8 +360,8 @@ async function execute({ sock, msg, args, BIDS, sender }) {
     if (args?.[0] === "نقاط") {
         const top = getTopPoints(10);
         if (!top.length) return sock.sendMessage(chatId, { text: "📊 _لا توجد نقاط بعد._" });
-        const list = top.map(([num, pts], i) =>
-            `${["🥇","🥈","🥉"][i] || `${i+1}.`} \`${num}\` — *${pts} نقطة*`
+        const list = top.map(([num, pts, rank], i) =>
+            `${["🥇","🥈","🥉"][i] || `${i+1}.`} \`${num}\` — *${pts} نقطة* — ${rank}`
         ).join("\n");
         return sock.sendMessage(chatId, { text: `🏆 *لوحة المتصدرين — كاشف الجاسوس:*\n\n${list}` });
     }
@@ -298,31 +373,41 @@ async function execute({ sock, msg, args, BIDS, sender }) {
         activeGames.get(chatId).stop = true;
         return sock.sendMessage(chatId, { react: { text: "🛑", key: msg.key } });
     }
+
+    // ── تحويل النظام (طرد ↔ إقصاء) ─────────────────────────
+    if (args?.[0] === "تحويل") {
+        const current = getMode(chatId);
+        const next    = current === "طرد" ? "اقصاء" : "طرد";
+        groupMode.set(chatId, next);
+
+        const msgs = {
+            "طرد": {
+                emoji: "🚪",
+                title: "نظام الطرد مفعّل",
+                desc:  "الخاسر سيُطرد من المجموعة فعلياً!",
+                warn:  "⚠️ _تأكد أن البوت مشرف قبل بدء اللعبة._",
+            },
+            "اقصاء": {
+                emoji: "🏳️",
+                title: "نظام الإقصاء مفعّل",
+                desc:  "الخاسر يخرج من اللعبة فقط — يبقى في المجموعة.",
+                warn:  "✅ _لا يحتاج البوت صلاحية طرد._",
+            },
+        };
+        const m = msgs[next];
+        return sock.sendMessage(chatId, {
+            text:
+`${m.emoji} *تم التحويل!*
+
+🔄 *النظام الحالي:* ${next === "طرد" ? "🚪 طرد" : "🏳️ إقصاء"}
+📌 *${m.title}*
+_${m.desc}_
+
+${m.warn}`,
+        });
+    }
     if (activeGames.has(chatId))
         return sock.sendMessage(chatId, { text: "⚠️ _لعبة نشطة بالفعل!_" });
-
-    // ── .شارك — تسجيل في فترة الانتظار ─────────────────────
-    if (args?.[0] === "شارك") {
-        const signup = pendingSignup.get(chatId);
-        if (!signup) return; // ما في تسجيل مفتوح
-
-        const senderRaw = msg.key.participant || chatId;
-        const phone     = resolveJid(senderRaw, signup.cache) || senderRaw;
-        const n         = numOf(phone || senderRaw);
-
-        // استثناء البوت والمشرفين والنخبة
-        const meta = await sock.groupMetadata(chatId).catch(() => null);
-        if (!meta) return;
-        const admNums = new Set(meta.participants.filter(p => p.admin).map(p => numOf(p.id)));
-        if (n === botNum || n === botLid || n === ownerNum) return;
-        if (admNums.has(n)) return;
-
-        if (!signup.players.has(phone || senderRaw)) {
-            signup.players.add(phone || senderRaw);
-            await sock.sendMessage(chatId, { react: { text: "✅", key: msg.key } });
-        }
-        return;
-    }
 
     const metadata = await sock.groupMetadata(chatId).catch(() => null);
     if (!metadata) return;
@@ -368,50 +453,102 @@ async function execute({ sock, msg, args, BIDS, sender }) {
         });
 
     // ══════════════════════════════════════════════════════════
-    //  مجموعة كبيرة → فترة تسجيل بـ .شارك (60 ثانية)
+    //  مرحلة التأكيد — إرسال خاص لكل مشارك محتمل
+    //  يرد بـ "نعم" خلال 60 ثانية للانضمام
     // ══════════════════════════════════════════════════════════
-    let finalPlayers;
+    const groupName = metadata.subject || "المجموعة";
 
-    if (basePlayers.length >= LARGE_GROUP) {
-        // افتح باب التسجيل
-        pendingSignup.set(chatId, { players: new Set(), cache });
-
-        await sock.sendMessage(chatId, {
-            text:
+    // إعلان في المجموعة
+    const confirmMentions = basePlayers.map(p => resolveJid(p, cache) || p);
+    await sock.sendMessage(chatId, {
+        text:
 `🕵️ *━━━ كاشف الجاسوس ━━━*
 
-👥 *المجموعة كبيرة (${basePlayers.length} شخص)*
-⚠️ _لحماية البوت، التسجيل يدوي_
+📨 _جاري إرسال دعوة خاصة لكل شخص..._
+✅ *ردّ بـ* \`نعم\` *في الخاص خلال 60 ثانية للانضمام!*
 
-📝 *اكتب* \`.شارك\` *خلال 60 ثانية للمشاركة!*
-🛑 اكتب \`.جاسوس وقف\` للإلغاء`,
-            mentions: allRaw,
-        });
+👥 *المدعوون (${basePlayers.length}):*
+${basePlayers.map(p => display(resolveJid(p,cache)||p)).join(" ")}`,
+        mentions: confirmMentions,
+    });
 
-        await wait(60000);
+    // إرسال الدعوة الخاصة لكل شخص
+    for (const p of basePlayers) {
+        const phone = resolveJid(p, cache) || p;
+        await sock.sendMessage(phone,
+`🎮 *دعوة للعبة الجاسوس*
 
-        const signup = pendingSignup.get(chatId);
-        pendingSignup.delete(chatId);
+📍 *المجموعة:* _${groupName}_
+🕵️ _لعبة كاشف الجاسوس — أنمي_
 
-        if (!signup || signup.players.size < 3) {
-            return sock.sendMessage(chatId, {
-                text: "❌ *لم يسجّل كافي اللاعبين (الحد الأدنى 3)*\n_أُلغيت اللعبة._",
-            });
-        }
-
-        finalPlayers = [...signup.players];
-        await sock.sendMessage(chatId, {
-            text: `✅ *سجّل ${finalPlayers.length} لاعب — تبدأ اللعبة الآن!*`,
-        });
-        await wait(2000);
-
-    } else {
-        // مجموعة صغيرة → الكل يدخل تلقائياً
-        finalPlayers = [...basePlayers];
+✅ رد بـ *نعم* خلال 60 ثانية للانضمام!
+❌ تجاهل الرسالة إذا لا تريد المشاركة.`
+        ).catch(() => {});
+        await wait(120);
     }
 
+    // استماع للردود في الخاص — 60 ثانية
+    const confirmed = new Set();
+    const pendingSet = new Set(basePlayers.map(p => numOf(resolveJid(p,cache)||p)));
+
+    const dmListener = ({ messages }) => {
+        const m = messages[0];
+        if (!m?.message) return;
+        // رسالة خاصة (ليست من مجموعة)
+        const jid = m.key.remoteJid;
+        if (!jid || jid.includes("@g.us") || jid.includes("@broadcast")) return;
+        if (m.key.fromMe) return;
+
+        const senderNum = numOf(jid);
+        if (!pendingSet.has(senderNum)) return;
+
+        const txt = (
+            m.message.conversation ||
+            m.message.extendedTextMessage?.text || ""
+        ).trim();
+
+        if (/^نعم$/i.test(txt)) {
+            // ابحث عن الـ jid الكامل في basePlayers
+            const full = basePlayers.find(p => numOf(resolveJid(p,cache)||p) === senderNum);
+            if (full && !confirmed.has(full)) {
+                confirmed.add(full);
+                sock.sendMessage(jid, { text: "✅ *تم تسجيلك! انتظر بدء اللعبة.*" }).catch(() => {});
+            }
+        }
+    };
+
+    sock.ev.on("messages.upsert", dmListener);
+    await wait(60000);
+    sock.ev.off("messages.upsert", dmListener);
+
+    const finalPlayers = [...confirmed];
+
+    if (finalPlayers.length < 3) {
+        return sock.sendMessage(chatId, {
+            text: `❌ *لم يؤكد كافي اللاعبين* _(${finalPlayers.length}/3 حد أدنى)_\n_أُلغيت اللعبة._`,
+        });
+    }
+
+    await sock.sendMessage(chatId, {
+        text:
+`✅ *${finalPlayers.length} لاعب أكّد مشاركته!*
+
+${finalPlayers.map(p => display(resolveJid(p,cache)||p)).join(" ")}
+
+${game.mode === "طرد" ? "🚪 *النظام: طرد* — الخاسر يُطرد من المجموعة!" : "🏳️ *النظام: إقصاء* — الخاسر يخرج من اللعبة فقط"}
+⏳ _تبدأ اللعبة خلال 5 ثوانٍ..._`,
+        mentions: finalPlayers.map(p => resolveJid(p,cache)||p),
+    });
+    await wait(5000);
+
     // ── جلسة اللعبة ──────────────────────────────────────────
-    const game = { stop: false, round: 0, players: finalPlayers };
+    const game = {
+        stop: false, round: 0, players: finalPlayers,
+        mode: getMode(chatId),
+        deadPlayers: [],          // الأموات يبقون في المجموعة كمراقبين
+        spyWins:  new Map(),      // jid → عدد مرات النجاة
+        detectiveWins: new Map(), // jid → عدد مرات الكشف
+    };
     activeGames.set(chatId, game);
     usedWords.clear();
 
@@ -431,48 +568,106 @@ async function execute({ sock, msg, args, BIDS, sender }) {
             const spies    = new Set(shuffled.slice(0, spyCount));
             const citizens = shuffled.slice(spyCount);
 
-            // ── توزيع الأدوار بالخاص ─────────────────────────
+            // ── توزيع الأدوار بالخاص (بدون الكلمة — فقط الدور) ────
             for (const p of citizens) {
-                await sock.sendMessage(p,
+                const ph = resolveJid(p, cache) || p;
+                await sock.sendMessage(ph,
 `🏘️ *الجولة ${game.round} — أنتَ مواطن أبرار!*
 
-🔑 *كلمة السر:* _${entry.word}_
-📌 _في المجموعة: اكتب الكلمة للنجاة_
-🗳️ _ثم مَنشِن من تشك أنه الجاسوس في التصويت!_`
+⏳ _انتظر... الكلمة ستصلك فور طرح السؤال!_
+🗳️ _بعدها صوّت في الخاص على من تشك أنه الجاسوس!_`
                 ).catch(() => {});
                 await wait(150);
             }
-            for (const p of spies) {
-                await sock.sendMessage(p,
+
+            const spyList = [...spies];
+            for (const p of spyList) {
+                const ph = resolveJid(p, cache) || p;
+                const otherSpies = spyList
+                    .filter(s => numOf(s) !== numOf(p))
+                    .map(s => `@${numOf(resolveJid(s,cache)||s)}`)
+                    .join("، ");
+                const conspiracy = spyList.length > 1
+                    ? `\n🤝 *رفاقك الجواسيس:* ${otherSpies}\n💬 _ابدأ رسالتك بكلمة *رسالة* لتصل لهم سراً!_`
+                    : "";
+                await sock.sendMessage(ph,
 `🕵️ *الجولة ${game.round} — أنتَ الجاسوس المندَس!*
 
 ⚠️ _لا تملك الكلمة — راقب وخمّن بسرعة!_
-💡 _خمّن الكلمة أولاً لتنجو، وإلا ستُكشف في التصويت!_`
+💡 _خمّن الكلمة أولاً لتنجو، وإلا ستُكشف في التصويت!_${conspiracy}`
                 ).catch(() => {});
                 await wait(150);
             }
 
+            // ── مستمع تآمر الجواسيس (طوال الجولة) ──────────────
+            const conspiracyNums = new Set(spyList.map(s => numOf(resolveJid(s,cache)||s)));
+            const conspiracyListener = ({ messages }) => {
+                const m = messages[0];
+                if (!m?.message) return;
+                const jid = m.key.remoteJid;
+                if (!jid || jid.includes("@g.us") || m.key.fromMe) return;
+                const senderNum = numOf(jid);
+                if (!conspiracyNums.has(senderNum)) return;
+                const txt = (m.message.conversation || m.message.extendedTextMessage?.text || "").trim();
+                if (!txt.startsWith("رسالة")) return;
+                const content = txt.replace(/^رسالة\s*/i, "").trim();
+                if (!content) return;
+                for (const s of spyList) {
+                    if (numOf(resolveJid(s,cache)||s) === senderNum) continue;
+                    const ph = resolveJid(s, cache) || s;
+                    sock.sendMessage(ph,
+                        `🕵️ *رسالة سرية من رفيق الجاسوس:*\n_${content}_`
+                    ).catch(() => {});
+                }
+            };
+            if (spyList.length > 1) sock.ev.on("messages.upsert", conspiracyListener);
+
             await wait(1500);
 
-            // ── إعلان اللغز في المجموعة ──────────────────────
+            // ── إعلان بداية الجولة — 15 ثانية قبل السؤال ────
             const playerMentions = players.map(p => display(p)).join(" ");
             await sock.sendMessage(chatId, {
                 text:
 `🎯 *━━━ كاشف الجاسوس | الجولة ${game.round} ━━━*
 
-🧩 *اللغز:*
-_${entry.question}_
-
 👥 *المشاركون (${players.length}):*
 ${playerMentions}
 
 🕵️ *الجواسيس:* ${spyCount} مندَس بينكم!
+⏳ *السؤال يُطرح خلال 15 ثانية — استعد!*`,
+                mentions: allRaw,
+            });
+
+            await wait(15000);
+            if (game.stop) break;
+
+            // ── إرسال الكلمة للمواطنين فور طرح السؤال ────────
+            for (const p of citizens) {
+                const ph = resolveJid(p, cache) || p;
+                await sock.sendMessage(ph,
+`🔑 *كلمة السر — الجولة ${game.round}:*
+
+📝 *${entry.word}*
+
+⏱️ _اكتبها الآن في المجموعة قبل 15 ثانية!_`
+                ).catch(() => {});
+                await wait(100);
+            }
+
+            // ── إعلان اللغز في المجموعة ──────────────────────
+            await sock.sendMessage(chatId, {
+                text:
+`🧩 *اللغز — الجولة ${game.round}:*
+
+_${entry.question}_
+
 ⏱️ *15 ثانية — اكتبوا الكلمة!*`,
                 mentions: allRaw,
             });
 
             // ── مرحلة الجواب (15 ثانية) ──────────────────────
             const answerMap = await phaseAnswer(sock, chatId, players, secretWord);
+            if (spyList.length > 1) sock.ev.off("messages.upsert", conspiracyListener);
             if (game.stop) break;
 
             // هل الجاسوس خمّن؟
@@ -484,13 +679,24 @@ ${playerMentions}
                 }
             }
 
+            // ── مرحلة النقاش (30 ثانية) ───────────────────────
+            await sock.sendMessage(chatId, {
+                text:
+`🗣️ *بدأ وقت النقاش! — 30 ثانية*
+
+تبادلوا الاتهامات وحاولوا كشف الجاسوس قبل بدء التصويت السري.
+🔍 _من يتصرف بشكل مريب؟ من إجاباته كانت غامضة؟_`,
+            });
+            await wait(30000);
+            if (game.stop) break;
+
             // ── مرحلة التصويت (30 ثانية) ─────────────────────
             await sock.sendMessage(chatId, {
                 text:
-`🗳️ *وقت التصويت! — 30 ثانية*
+`🗳️ *وقت التصويت السري! — 30 ثانية*
 
-📌 *منشِن* الشخص الذي تعتقد أنه الجاسوس!
-_كل لاعب يملك صوتاً واحداً فقط._`,
+📨 _ستصلك رسالة خاصة — اكتب رقم أو اسم من تشك أنه الجاسوس!_
+🔒 _لن يعرف أحد صوتك._`,
             });
 
             const votes = await phaseVote(sock, chatId, players, players, cache);
@@ -530,56 +736,55 @@ _كل لاعب يملك صوتاً واحداً فقط._`,
                 addPoints(spyGuessedFirst, PTS.SPY_GUESSES_WORD);
 
                 roundMsg =
-`😱 *الجاسوس خمّن الكلمة وفاز بالجولة!*
+`😱 *الجاسوس خمّن المكان وفاز بالجولة!*
 
 🕵️ *الجاسوس:* ${display(spyPh)} _نجا (+${PTS.SPY_GUESSES_WORD} نقاط)_
-🔑 _الكلمة كانت:_ *${entry.word}*`;
+📍 _المكان كان:_ *${entry.word}*`;
 
                 if (slowCitizen) {
                     kicked.push(slowCitizen);
                     const scPh = resolveJid(slowCitizen, cache) || slowCitizen;
-                    roundMsg += `\n⚡ *${display(scPh)} طُرد — كان الأبطأ في الإجابة!*`;
+                    roundMsg += `\n⚡ *${display(scPh)} أُعدم — كان الأبطأ في الإجابة!*`;
                 }
 
             } else if (votedOut && spies.has(votedOut)) {
-                // التصويت كشف الجاسوس ✓
                 kicked.push(votedOut);
                 const spyPh = resolveJid(votedOut, cache) || votedOut;
 
                 roundMsg =
-`✅ *المواطنون كشفوا الجاسوس!*
+`✅ *المحققون كشفوا الجاسوس!*
 
-🕵️ *الجاسوس كان:* ${display(spyPh)} _طُرد!_
-🔑 _الكلمة كانت:_ *${entry.word}*`;
+🕵️ *الجاسوس كان:* ${display(spyPh)} _أُعدم!_
+📍 _المكان كان:_ *${entry.word}*`;
 
-                // نقاط لمن صوّت صح
                 for (const [voter, nominated] of votes.entries()) {
                     if (numOf(nominated) === numOf(votedOut)) {
                         const newPts = addPoints(voter, PTS.CITIZEN_VOTES_SPY);
                         const vPh = resolveJid(voter, cache) || voter;
-                        roundMsg += `\n🎯 ${display(vPh)} صوّت صح _(+${PTS.CITIZEN_VOTES_SPY} نقاط | المجموع: ${newPts})_`;
+                        roundMsg += `\n🎯 ${display(vPh)} كشف الجاسوس _(+${PTS.CITIZEN_VOTES_SPY} نقاط | المجموع: ${newPts})_`;
+                        // تتبع المحققين
+                        game.detectiveWins.set(numOf(voter), (game.detectiveWins.get(numOf(voter)) || 0) + 1);
                     }
                 }
 
             } else if (votedOut) {
-                // التصويت وقع على مواطن بريء — الجاسوس ينجو
                 kicked.push(votedOut);
                 const innocentPh = resolveJid(votedOut, cache) || votedOut;
-                const spyList    = [...spies].map(s => {
-                    const ph = resolveJid(s, cache)||s;
-                    return display(ph);
-                }).join(" ");
+                const spyListDisplay = [...spies].map(s => display(resolveJid(s,cache)||s)).join(" ");
                 const spyJids = [...spies].flatMap(s => mentionSet(resolveJid(s,cache)||s, s));
 
-                // الجاسوس ينجو بالجولة
-                for (const spy of spies) addPoints(spy, PTS.SPY_SURVIVES);
+                for (const spy of spies) {
+                    addPoints(spy, PTS.SPY_SURVIVES);
+                    // تتبع نجاة الجواسيس
+                    game.spyWins.set(numOf(spy), (game.spyWins.get(numOf(spy)) || 0) + 1);
+                }
 
                 roundMsg =
 `😈 *الجاسوس نجا!*
 
-💀 *طُرد بريء:* ${display(innocentPh)} _(مواطن!)_
-🕵️ *الجاسوس كان:* ${spyList} _(+${PTS.SPY_SURVIVES} نقاط)_
-🔑 _الكلمة كانت:_ *${entry.word}*`;
+💀 *أُعدم بريء:* ${display(innocentPh)} _(محقق!)_
+🕵️ *الجاسوس كان:* ${spyListDisplay} _(+${PTS.SPY_SURVIVES} نقاط)_
+📍 _المكان كان:_ *${entry.word}*`;
 
             } else {
                 // ما صوّت أحد — لا طرد هذه الجولة
@@ -587,7 +792,7 @@ _كل لاعب يملك صوتاً واحداً فقط._`,
                 roundMsg =
 `🤷 *لم يُدلِ أحد بصوته!*
 
-🔑 _الكلمة كانت:_ *${entry.word}*
+📍 _المكان كان:_ *${entry.word}*
 🕵️ _الجاسوس كان:_ ${spyList}`;
             }
 
@@ -596,7 +801,7 @@ _كل لاعب يملك صوتاً واحداً فقط._`,
             for (const p of survivingCitizens) {
                 addPoints(p, PTS.CITIZEN_SURVIVES);
             }
-            roundMsg += `\n\n🏅 _المواطنون الناجون (+${PTS.CITIZEN_SURVIVES} نقطة لكل منهم)_`;
+            roundMsg += `\n\n🏅 _المحققون الناجون (+${PTS.CITIZEN_SURVIVES} نقطة لكل منهم)_`;
 
             // إرسال النتيجة
             const resultMentions = [...new Set([
@@ -605,10 +810,33 @@ _كل لاعب يملك صوتاً واحداً فقط._`,
             ])];
             await sock.sendMessage(chatId, { text: roundMsg, mentions: resultMentions });
 
-            // طرد المُقصَين
+            // ── إضافة المُقصَين لـ deadPlayers وإبلاغهم ──────
             for (const target of kicked) {
-                await sock.groupParticipantsUpdate(chatId, [target], "remove").catch(() => {});
-                await wait(400);
+                game.deadPlayers.push(target);
+                const tPh   = resolveJid(target, cache) || target;
+                const tName = display(tPh);
+
+                if (game.mode === "طرد") {
+                    // طرد فعلي من المجموعة
+                    await sock.sendMessage(chatId, {
+                        text: `🚪 *تم طرد ${tName} من المجموعة!*`,
+                        mentions: [tPh],
+                    });
+                    await sock.groupParticipantsUpdate(chatId, [tPh], "remove").catch(() => {});
+                    await sock.sendMessage(tPh,
+                        `🚪 *تم طردك من المجموعة!*\n_خسرت في لعبة تحقيق المافيا._`
+                    ).catch(() => {});
+                } else {
+                    // إقصاء — يبقى في المجموعة كمراقب
+                    await sock.sendMessage(chatId, {
+                        text: `💀 *تم إعدام المتهم ${tName}!*\n_سيبقى في المجموعة كمراقب صامت._`,
+                        mentions: [tPh],
+                    });
+                    await sock.sendMessage(tPh,
+                        `⚰️ *لقد تم إعدامك في لعبة تحقيق المافيا!*\n_يمكنك البقاء في المجموعة ومشاهدة اللعبة لكنك لا تستطيع التصويت أو الإجابة._`
+                    ).catch(() => {});
+                }
+                await wait(500);
             }
 
             // تحديث قائمة اللاعبين للجولة التالية
@@ -629,21 +857,46 @@ _كل لاعب يملك صوتاً واحداً فقط._`,
         if (!game.stop) {
             const finalTop = getTopPoints(5);
             const topText  = finalTop.length
-                ? finalTop.map(([num, pts], i) =>
-                    `${["🥇","🥈","🥉"][i]||`${i+1}.`} \`${num}\` — *${pts} نقطة*`
+                ? finalTop.map(([num, pts, rank], i) =>
+                    `${["🥇","🥈","🥉"][i]||`${i+1}.`} \`${num}\` — *${pts} نقطة* — ${rank}`
                   ).join("\n")
                 : "_لا توجد نقاط_";
 
+            // أفضل المحققين
+            const topDetectives = [...game.detectiveWins.entries()]
+                .sort((a, b) => b[1] - a[1]).slice(0, 3);
+            const detectiveText = topDetectives.length
+                ? topDetectives.map(([num, wins], i) =>
+                    `${["🥇","🥈","🥉"][i]||`${i+1}.`} \`${num}\` — كشف *${wins}* جاسوس`
+                  ).join("\n")
+                : "_لا يوجد_";
+
+            // أفضل الجواسيس
+            const topSpies = [...game.spyWins.entries()]
+                .sort((a, b) => b[1] - a[1]).slice(0, 3);
+            const spyText = topSpies.length
+                ? topSpies.map(([num, wins], i) =>
+                    `${["🥇","🥈","🥉"][i]||`${i+1}.`} \`${num}\` — نجا *${wins}* مرة`
+                  ).join("\n")
+                : "_لا يوجد_";
+
             await sock.sendMessage(chatId, {
                 text:
-`🏁 *انتهت لعبة كاشف الجاسوس!*
+`🏁 *انتهى تحقيق المافيا!*
 _إجمالي الجولات:_ *${game.round}*
+_الضحايا:_ *${game.deadPlayers.length}* لاعب
 
-🏆 *أعلى النقاط:*
+🔍 *أفضل المحققين — كاشفو الجواسيس:*
+${detectiveText}
+
+🕵️ *أذكى الجواسيس — الناجون بالتمويه:*
+${spyText}
+
+🏆 *أعلى النقاط الكلية:*
 ${topText}`,
             });
         } else {
-            await sock.sendMessage(chatId, { text: "🛑 *توقفت اللعبة.*" });
+            await sock.sendMessage(chatId, { text: "🛑 *توقف التحقيق.*" });
         }
 
     } catch (err) {
