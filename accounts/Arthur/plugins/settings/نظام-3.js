@@ -2057,20 +2057,25 @@ const igDownloader = {
 // ══════════════════════════════════════════════════════════════
 const tikwm = {
     async download(url) {
-        if (!axios) return null;
+        const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
+        const headers = {
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Cookie':       'current_language=en',
+            'User-Agent':   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+        };
         try {
-            const res  = await axios.get(
-                `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`,
-                {
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                        'Cookie':       'current_language=en',
-                        'User-Agent':   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
-                    },
-                    timeout: 20_000,
-                }
-            );
-            const d = res.data?.data;
+            let json;
+            // axios أفضل لأنه يتبع redirects تلقائياً (مهم لـ vt.tiktok)
+            // fetch كـ fallback لو axios مب متاح
+            if (axios) {
+                const res = await axios.get(apiUrl, { headers, timeout: 20_000 });
+                json = res.data;
+            } else {
+                const res = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(20_000) });
+                if (!res.ok) return null;
+                json = await res.json();
+            }
+            const d = json?.data;
             if (!d?.play) return null;
             return {
                 videoHD: d.hdplay || d.play,
