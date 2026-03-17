@@ -2057,25 +2057,20 @@ const igDownloader = {
 // ══════════════════════════════════════════════════════════════
 const tikwm = {
     async download(url) {
-        const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
-        const headers = {
-            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            'Cookie':       'current_language=en',
-            'User-Agent':   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
-        };
+        if (!axios) return null;
         try {
-            let json;
-            // axios أفضل لأنه يتبع redirects تلقائياً (مهم لـ vt.tiktok)
-            // fetch كـ fallback لو axios مب متاح
-            if (axios) {
-                const res = await axios.get(apiUrl, { headers, timeout: 20_000 });
-                json = res.data;
-            } else {
-                const res = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(20_000) });
-                if (!res.ok) return null;
-                json = await res.json();
-            }
-            const d = json?.data;
+            const res  = await axios.get(
+                `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`,
+                {
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                        'Cookie':       'current_language=en',
+                        'User-Agent':   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+                    },
+                    timeout: 20_000,
+                }
+            );
+            const d = res.data?.data;
             if (!d?.play) return null;
             return {
                 videoHD: d.hdplay || d.play,
@@ -3567,13 +3562,36 @@ ${lines}
 
                 const title = videoInfo?.title || 'يوتيوب';
 
-                // ── تحميل بـ youtube-mp41 (RapidAPI) + retry backoff ──
+                // ── تحميل: cobalt (مجاني أسرع) → ytmp41 fallback ──
                 session.attempts = 0;
-                const apiResult = await withRetry(
-                    () => audioOnly ? ytmp41.audio(url) : ytmp41.video(url, '480'),
-                    'ytmp41',
-                    2  // محاولتان فقط — أسرع
-                ).catch(() => null);
+                let apiResult = null;
+
+                // cobalt.tools: مجاني، أسرع، بدون انتظار polling
+                if (!audioOnly) {
+                    try {
+                        const cobaltResp = await fetch('https://api.cobalt.tools/', {
+                            method:  'POST',
+                            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                            body:    JSON.stringify({ url, videoQuality: '720', downloadMode: 'auto', filenameStyle: 'basic' }),
+                            signal:  AbortSignal.timeout(15_000),
+                        });
+                        if (cobaltResp.ok) {
+                            const cj = await cobaltResp.json();
+                            if ((cj.status === 'redirect' || cj.status === 'tunnel') && cj.url)
+                                apiResult = { url: cj.url, title };
+                            else if (cj.status === 'picker' && cj.picker?.[0]?.url)
+                                apiResult = { url: cj.picker[0].url, title };
+                        }
+                    } catch {}
+                }
+
+                // ytmp41 كـ fallback أو للصوت
+                if (!apiResult) {
+                    apiResult = await withRetry(
+                        () => audioOnly ? ytmp41.audio(url) : ytmp41.video(url, '480'),
+                        'ytmp41', 2
+                    ).catch(() => null);
+                }
 
                 if (apiResult?.url) {
                     try {
