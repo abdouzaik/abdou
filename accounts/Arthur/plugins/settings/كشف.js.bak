@@ -174,7 +174,7 @@ const KashfPlugin = {
 };
 
 const TafeilPlugin = {
-    command:     'تفعيل',
+    command:     'هو',
     description: 'تفعيل مراقبة مجموعة (في الخاص)',
     elite:       'on',
     group:       false,
