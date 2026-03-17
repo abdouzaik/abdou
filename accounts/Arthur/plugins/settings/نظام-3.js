@@ -2053,104 +2053,35 @@ const igDownloader = {
 
 
 // ══════════════════════════════════════════════════════════════
-//  tikwm API — تيك توك
+//  tikwm — نفس طريقة تيك_توك.js الأصلي (GET + axios)
 // ══════════════════════════════════════════════════════════════
 const tikwm = {
-    // حل روابط vt.tiktok / vm.tiktok المختصرة → الرابط الكامل
-    async _resolveUrl(url) {
-        if (!url.includes('vt.tiktok') && !url.includes('vm.tiktok') && !url.includes('t.tiktok')) return url;
-        try {
-            // axios يتبع الـ redirect تلقائياً
-            if (axios) {
-                const r = await axios.get(url, {
-                    maxRedirects: 5,
-                    timeout: 8_000,
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36' },
-                });
-                return r.request?.res?.responseUrl || r.config?.url || url;
-            }
-        } catch {}
-        return url;
-    },
-
-    // المصدر الأول: tikwm.com
-    async _tikwm(url) {
-        try {
-            const resp = await fetch('https://www.tikwm.com/api/', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                    'User-Agent':   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
-                    'Cookie':       'current_language=en',
-                    'Referer':      'https://www.tikwm.com/',
-                },
-                body: new URLSearchParams({ url, count: '12', cursor: '0', web: '1', hd: '1' }),
-                signal: AbortSignal.timeout(20_000),
-            });
-            if (!resp.ok) return null;
-            const json = await resp.json();
-            // code 0 = نجاح، -1 = خطأ، نقبل أيضاً غياب code
-            if (json?.code === -1 || !json?.data) return null;
-            const d = json.data;
-            return {
-                videoHD: d.hdplay || d.play || null,
-                video:   d.play   || null,
-                audio:   d.music  || null,
-                title:   d.title  || '',
-                author:  d.author?.nickname || d.author?.unique_id || '',
-            };
-        } catch { return null; }
-    },
-
-    // المصدر الثاني: musicaldown.com (fallback)
-    async _musicaldown(url) {
+    async download(url) {
         if (!axios) return null;
         try {
-            const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-            // خطوة 1: جلب token
-            const home = await axios.get('https://musicaldown.com/en', {
-                headers: { 'User-Agent': ua },
-                timeout: 8_000,
-            });
-            const token   = home.data?.match(/id="link"\s[^>]*value="([^"]+)"/)?.[1];
-            const tokenId = home.data?.match(/name="([^"]+)"\s+value="[^"]*"\s+id="(?!link)[^"]+"/)?.[1];
-
-            // خطوة 2: إرسال الرابط
-            const form = new URLSearchParams({ 'link': url });
-            if (tokenId && token) form.set(tokenId, token);
-
-            const resp = await axios.post('https://musicaldown.com/download', form, {
-                headers: {
-                    'Content-Type':  'application/x-www-form-urlencoded',
-                    'User-Agent':    ua,
-                    'Origin':        'https://musicaldown.com',
-                    'Referer':       'https://musicaldown.com/en',
-                    'Cookie':        home.headers['set-cookie']?.join('; ') || '',
-                },
-                timeout: 15_000,
-            });
-
-            const html = resp.data || '';
-            const mp4  = html.match(/href="(https?:\/\/[^"]+\.mp4[^"]*)"/i)?.[1];
-            if (mp4) return { videoHD: mp4, video: mp4, audio: null, title: '', author: '' };
-            return null;
+            const res  = await axios.get(
+                `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`,
+                {
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                        'Cookie':       'current_language=en',
+                        'User-Agent':   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+                    },
+                    timeout: 20_000,
+                }
+            );
+            const d = res.data?.data;
+            if (!d?.play) return null;
+            return {
+                videoHD: d.hdplay || d.play,
+                video:   d.play,
+                audio:   d.music  || null,
+                title:   d.title  || '',
+                author:  d.author || '',
+                type:    d.type   || 'video',
+                images:  d.images || null,
+            };
         } catch { return null; }
-    },
-
-    async download(url) {
-        // حل الرابط المختصر أولاً
-        const resolved = await this._resolveUrl(url);
-
-        // جرّب tikwm
-        const r1 = await this._tikwm(resolved);
-        if (r1?.videoHD || r1?.video) { console.log('[TikTok] ✅ tikwm'); return r1; }
-
-        // fallback: musicaldown
-        const r2 = await this._musicaldown(resolved);
-        if (r2?.videoHD || r2?.video) { console.log('[TikTok] ✅ musicaldown'); return r2; }
-
-        console.error('[TikTok] فشلت جميع المصادر');
-        return null;
     },
 };
 
@@ -3755,29 +3686,54 @@ ${lines}
             // ══════════════════════════════════════
             if (isTT) {
                 const ttResult = await tikwm.download(url).catch(() => null);
-                const ttUrl = audioOnly ? ttResult?.audio : (ttResult?.videoHD || ttResult?.video);
-                if (ttUrl) {
-                    try {
-                        const buf = await downloadImageBuffer(ttUrl);
-                        if (audioOnly) {
+                if (!ttResult) {
+                    reactFail(sock, m);
+                    await update(`❌ *فشل تحميل تيك توك*\n_جرب مرة أخرى._\n\n🔙 *رجوع*`);
+                    return;
+                }
+
+                try {
+                    const caption =
+                        `❀ *العنوان ›* ${ttResult.title || 'بدون عنوان'}\n` +
+                        `> ☕︎ المؤلف › ${ttResult.author?.nickname || ttResult.author?.unique_id || ttResult.author || 'مجهول'}\n`;
+
+                    if (audioOnly && ttResult.audio) {
+                        // صوت — إرسال بـ URL مباشر مثل الملف الأصلي
+                        await sock.sendMessage(chatId, {
+                            audio:    { url: ttResult.audio },
+                            mimetype: 'audio/mp4',
+                            fileName: 'tiktok_audio.mp4',
+                        }, { quoted: m });
+
+                    } else if (ttResult.type === 'image' && Array.isArray(ttResult.images)) {
+                        // صور slideshow
+                        for (const imgUrl of ttResult.images) {
+                            await sock.sendMessage(chatId, { image: { url: imgUrl }, caption }, { quoted: m });
+                        }
+                        if (ttResult.audio) {
                             await sock.sendMessage(chatId, {
-                                audio: buf, mimetype: 'audio/mpeg', ptt: false,
-                                fileName: `${ttResult.title || 'tiktok'}.mp3`,
-                            }, { quoted: m });
-                        } else {
-                            await sock.sendMessage(chatId, {
-                                video: buf,
-                                caption: `🎵 ${ttResult.author ? '@' + ttResult.author + ' — ' : ''}${ttResult.title || 'TikTok'}`,
+                                audio: { url: ttResult.audio }, mimetype: 'audio/mp4', fileName: 'tiktok_audio.mp4',
                             }, { quoted: m });
                         }
-                        reactOk(sock, m);
-                        await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
-                        return;
-                    } catch {}
+
+                    } else {
+                        // فيديو — إرسال بـ URL مباشر (أسرع من downloadImageBuffer)
+                        const ttUrl = ttResult.videoHD || ttResult.video;
+                        await sock.sendMessage(chatId, {
+                            video:   { url: ttUrl },
+                            caption,
+                        }, { quoted: m });
+                    }
+
+                    reactOk(sock, m);
+                    await update(`☑️ *تم التحميل!*\n\n🔙 *رجوع*`);
+                    return;
+                } catch (e) {
+                    console.error('[TikTok] فشل الإرسال:', e.message);
+                    reactFail(sock, m);
+                    await update(`❌ *فشل تحميل تيك توك*\n_جرب مرة أخرى._\n\n🔙 *رجوع*`);
+                    return;
                 }
-                reactFail(sock, m);
-                await update(`❌ *فشل تحميل تيك توك*\n_جرب مرة أخرى._\n\n🔙 *رجوع*`);
-                return;
             }
 
             // ── yt-dlp: فيسبوك + صوت الانستا/التيك/باقي المنصات ──
